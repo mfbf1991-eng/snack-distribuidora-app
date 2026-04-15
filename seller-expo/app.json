@@ -1,4 +1,4 @@
-﻿{
+{
   "expo": {
     "name": "Vendedor VeDistribuidora",
     "slug": "vendedor-ve-distribuidora",
@@ -10,6 +10,12 @@
     },
     "assetBundlePatterns": [
       "**/*"
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "22fce771-f904-4835-92be-f7e3d87c5f3d"
+      }
+    },
+    "owner": "150291"
   }
 }
