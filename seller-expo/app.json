@@ -1,0 +1,12 @@
+﻿{
+  "expo": {
+    "name": "Vendedor VeDistribuidora",
+    "slug": "vendedor-ve-distribuidora",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "assetBundlePatterns": [
+      "**/*"
+    ]
+  }
+}

@@ -1,0 +1,13 @@
+node_modules/
+**/node_modules/
+
+.expo/
+**/.expo/
+
+dist/
+*.log
+
+.env
+**/.env
+.DS_Store
+Thumbs.db

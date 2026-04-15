@@ -1,0 +1,634 @@
+{
+  "clients": [
+    {
+      "id": "client_7hl6olbm",
+      "tradeName": "FALCAO ACHIL MERCADO",
+      "buyerName": "Falcao",
+      "cep": "87075465",
+      "addressStreet": "AVENIDA DAS TORRES",
+      "addressNumber": "1595",
+      "addressNeighborhood": "PARQUE HORTENCIA",
+      "addressCity": "MARINGA",
+      "addressState": "PR",
+      "location": "AVENIDA DAS TORRES, 1595, PARQUE HORTENCIA, MARINGA, PR",
+      "type": "Mercearia",
+      "phone": "(44) 8429-7071",
+      "email": "a2contabilidade@outlook.com",
+      "cnpj": "37398373000172",
+      "ie": "",
+      "observations": "",
+      "internalId": "CLI-0002",
+      "managedByType": "seller",
+      "managedBySellerId": "seller_ext_01",
+      "name": "FALCAO ACHIL MERCADO",
+      "contact": "Falcao",
+      "createdAt": "2026-04-13T02:12:53.612Z"
+    },
+    {
+      "id": "client_jyex3kgk",
+      "tradeName": "VE DISTRIBUIDORA",
+      "buyerName": "Sulmely",
+      "cep": "87118300",
+      "addressStreet": "RUA PIONEIRA MARIA LOPES",
+      "addressNumber": "305",
+      "addressNeighborhood": "JARDIM NOVO BERTIOGA",
+      "addressCity": "SARANDI",
+      "addressState": "PR",
+      "location": "RUA PIONEIRA MARIA LOPES, 305, JARDIM NOVO BERTIOGA, SARANDI, PR",
+      "type": "bodega",
+      "phone": "(44) 8330-1094 / (0000) 0000-0000",
+      "email": "sulmelyoberto@gmail.com",
+      "cnpj": "55042826000105",
+      "ie": "",
+      "observations": "",
+      "managedByType": "owner",
+      "managedBySellerId": "",
+      "internalId": "CLI-0001",
+      "name": "VE DISTRIBUIDORA",
+      "contact": "Sulmely",
+      "createdAt": "2026-04-11T13:33:07.719Z"
+    },
+    {
+      "id": "client_kat7xihu",
+      "name": "Santa Clara",
+      "location": "Jardim ebenezer",
+      "type": "Mercado",
+      "contact": "44997178878",
+      "createdAt": "2026-04-11T12:42:51.108Z"
+    }
+  ],
+  "visits": [
+    {
+      "id": "visit_jynj8hn5",
+      "date": "2026-04-11",
+      "clientId": "client_jyex3kgk",
+      "delivered": 12,
+      "remaining": 5,
+      "soldAmount": 7,
+      "amountCollected": 20,
+      "paymentType": "consignado",
+      "nextVisitDate": "19/04/2026",
+      "notes": "Consignado"
+    },
+    {
+      "id": "visit_j7lqu5mw",
+      "date": "2026-04-05",
+      "clientId": "client_kat7xihu",
+      "delivered": 12,
+      "remaining": 0,
+      "soldAmount": 12,
+      "amountCollected": 0,
+      "paymentType": "consignado",
+      "nextVisitDate": "2026-04-24",
+      "notes": ""
+    },
+    {
+      "id": "visit_njbwvynk",
+      "date": "2026-04-11",
+      "clientId": "client_jyex3kgk",
+      "delivered": 48,
+      "remaining": 0,
+      "soldAmount": 288,
+      "soldUnits": 48,
+      "totalValue": 288,
+      "items": [
+        {
+          "productId": "product_37ckk6kb",
+          "productName": "Malta",
+          "quantity": 24,
+          "unitPrice": 8,
+          "total": 192
+        },
+        {
+          "productId": "product_5nx59va5",
+          "productName": "Platanito",
+          "quantity": 24,
+          "unitPrice": 4,
+          "total": 96
+        }
+      ],
+      "amountCollected": 0,
+      "paymentType": "consignado",
+      "saleType": "consignado",
+      "boletoDays": 0,
+      "dueDate": "",
+      "nextVisitDate": "2026-04-30",
+      "notes": "No despachar más hasta que pague"
+    },
+    {
+      "id": "visit_pxz2toqu",
+      "date": "2026-04-11",
+      "clientId": "client_jyex3kgk",
+      "delivered": 10,
+      "remaining": 0,
+      "soldAmount": 40,
+      "soldUnits": 10,
+      "totalValue": 40,
+      "items": [
+        {
+          "productId": "product_5nx59va5",
+          "productName": "Platanito",
+          "quantity": 10,
+          "unitPrice": 4,
+          "total": 40
+        }
+      ],
+      "amountCollected": 40,
+      "paymentType": "consignado",
+      "saleType": "boleto",
+      "boletoDays": 7,
+      "dueDate": "2026-04-18",
+      "nextVisitDate": "19/04/2026",
+      "notes": "",
+      "boletoPaid": true,
+      "boletoPaidAt": "2026-04-12T12:59:55.167Z"
+    },
+    {
+      "id": "visit_yzu7cut3",
+      "date": "2026-04-13",
+      "clientId": "client_7hl6olbm",
+      "delivered": 12,
+      "remaining": 0,
+      "soldAmount": 48,
+      "soldUnits": 12,
+      "totalValue": 48,
+      "items": [
+        {
+          "productId": "product_5nx59va5",
+          "productName": "Platanito",
+          "quantity": 12,
+          "unitPrice": 4,
+          "total": 48,
+          "remaining": 0
+        }
+      ],
+      "amountCollected": 0,
+      "collectionMethod": "efectivo",
+      "paymentType": "consignado",
+      "saleType": "consignado",
+      "boletoDays": 0,
+      "dueDate": "",
+      "boletoPaid": true,
+      "boletoPaidAt": "",
+      "invoiceNumber": "",
+      "invoiceLocked": false,
+      "nextVisitDate": "19/04/2026",
+      "notes": ""
+    },
+    {
+      "id": "visit_hupdmyqr",
+      "date": "2026-04-13",
+      "clientId": "client_7hl6olbm",
+      "delivered": 1,
+      "remaining": 0,
+      "soldAmount": 4,
+      "soldUnits": 1,
+      "totalValue": 4,
+      "items": [
+        {
+          "productId": "product_5nx59va5",
+          "productName": "Platanito",
+          "quantity": 1,
+          "unitPrice": 4,
+          "total": 4,
+          "remaining": 0
+        }
+      ],
+      "amountCollected": 4,
+      "collectionMethod": "boleto",
+      "paymentType": "consignado",
+      "saleType": "boleto",
+      "boletoDays": 7,
+      "dueDate": "2026-04-20",
+      "boletoPaid": true,
+      "boletoPaidAt": "2026-04-13T19:58:43.802Z",
+      "invoiceNumber": "",
+      "invoiceLocked": false,
+      "nextVisitDate": "2026-04-30",
+      "notes": ""
+    },
+    {
+      "id": "visit_vzbnq7r2",
+      "date": "2026-04-13",
+      "clientId": "client_7hl6olbm",
+      "visitType": "count_only",
+      "delivered": 0,
+      "remaining": 0,
+      "soldAmount": 0,
+      "soldUnits": 0,
+      "totalValue": 0,
+      "items": [
+        {
+          "productId": "product_37ckk6kb",
+          "productName": "Malta",
+          "quantity": 0,
+          "unitPrice": 0,
+          "total": 0,
+          "remaining": 0
+        }
+      ],
+      "amountCollected": 50,
+      "collectionMethod": "efectivo",
+      "paymentType": "consignado",
+      "saleType": "consignado",
+      "boletoDays": 0,
+      "dueDate": "",
+      "boletoPaid": true,
+      "boletoPaidAt": "",
+      "invoiceNumber": "",
+      "invoiceLocked": false,
+      "nextVisitDate": "",
+      "notes": ""
+    }
+  ],
+  "sellers": [
+    {
+      "id": "seller_owner",
+      "name": "Propietario",
+      "role": "owner",
+      "phone": "",
+      "commissionRate": 5,
+      "weeklyGoal": 0,
+      "monthlyGoal": 0,
+      "active": true
+    },
+    {
+      "id": "seller_ext_01",
+      "name": "Edwin",
+      "role": "seller",
+      "phone": "",
+      "commissionRate": 20,
+      "weeklyGoal": 0,
+      "monthlyGoal": 0,
+      "active": true
+    }
+  ],
+  "sellerUsers": [
+    {
+      "id": "seller_user_vyl34gxt",
+      "sellerId": "seller_ext_01",
+      "username": "edwin",
+      "pinHash": "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4",
+      "active": true,
+      "createdAt": "2026-04-13T01:18:07.157Z"
+    }
+  ],
+  "sellerSessions": [
+    {
+      "id": "session_0zktkab2",
+      "token": "0a5aac116eee9673af3038a919a56a9935fcfdfb8c5728a7",
+      "sellerUserId": "seller_user_vyl34gxt",
+      "sellerId": "seller_ext_01",
+      "createdAt": "2026-04-13T01:23:12.920Z",
+      "expiresAt": "2026-05-13T01:23:12.919Z"
+    },
+    {
+      "id": "session_lrm1q6q8",
+      "token": "8ec059da556beb780e20569a868ceefcadfa38bee3ccfb84",
+      "sellerUserId": "seller_user_vyl34gxt",
+      "sellerId": "seller_ext_01",
+      "createdAt": "2026-04-13T01:35:43.634Z",
+      "expiresAt": "2026-05-13T01:35:43.630Z"
+    },
+    {
+      "id": "session_77gbw1rf",
+      "token": "179c40d1d76d36be5ff6ef1df9dc25fa857ffd3ed70c996b",
+      "sellerUserId": "seller_user_vyl34gxt",
+      "sellerId": "seller_ext_01",
+      "createdAt": "2026-04-13T01:46:52.074Z",
+      "expiresAt": "2026-05-13T01:46:52.074Z"
+    },
+    {
+      "id": "session_oqyizu5s",
+      "token": "cd041130f4201e8eb4a007e5c0e2dc68850cc59048107965",
+      "sellerUserId": "seller_user_vyl34gxt",
+      "sellerId": "seller_ext_01",
+      "createdAt": "2026-04-13T02:11:50.849Z",
+      "expiresAt": "2026-05-13T02:11:50.834Z"
+    },
+    {
+      "id": "session_cnwaxjwj",
+      "token": "c90eb120551d06641c7fb268c169ce84425cfdd6a091bc3d",
+      "sellerUserId": "seller_user_vyl34gxt",
+      "sellerId": "seller_ext_01",
+      "createdAt": "2026-04-13T02:38:04.232Z",
+      "expiresAt": "2026-05-13T02:38:04.228Z"
+    },
+    {
+      "id": "session_gdzn7pu7",
+      "token": "06c10c14623ab6e1d3a987c982332b45d694e6b1b10af59d",
+      "sellerUserId": "seller_user_vyl34gxt",
+      "sellerId": "seller_ext_01",
+      "createdAt": "2026-04-13T02:47:58.307Z",
+      "expiresAt": "2026-05-13T02:47:58.282Z"
+    },
+    {
+      "id": "session_92tq897c",
+      "token": "7d7966e32910246bcbb59307892d844df3bd5333f2e6746a",
+      "sellerUserId": "seller_user_vyl34gxt",
+      "sellerId": "seller_ext_01",
+      "createdAt": "2026-04-13T02:50:59.463Z",
+      "expiresAt": "2026-05-13T02:50:59.463Z"
+    },
+    {
+      "id": "session_nm84pqhb",
+      "token": "9ae466abafac38accafe1914fea62ba24d80957ed2bc51f6",
+      "sellerUserId": "seller_user_vyl34gxt",
+      "sellerId": "seller_ext_01",
+      "createdAt": "2026-04-13T02:51:28.571Z",
+      "expiresAt": "2026-05-13T02:51:28.571Z"
+    },
+    {
+      "id": "session_evz3rewb",
+      "token": "5b10550a5820eb7542e08d77d90dfa3b278762067f5de107",
+      "sellerUserId": "seller_user_vyl34gxt",
+      "sellerId": "seller_ext_01",
+      "createdAt": "2026-04-13T02:57:21.698Z",
+      "expiresAt": "2026-05-13T02:57:21.696Z"
+    },
+    {
+      "id": "session_xl9f8kfb",
+      "token": "cddc22104581041fb21b3e5033c32b4ec045627aa1cf7b43",
+      "sellerUserId": "seller_user_vyl34gxt",
+      "sellerId": "seller_ext_01",
+      "createdAt": "2026-04-13T02:57:44.819Z",
+      "expiresAt": "2026-05-13T02:57:44.819Z"
+    },
+    {
+      "id": "session_eyjsecw3",
+      "token": "dc559418aec70f68ffa661a8d0f04e6f7481b5301892870d",
+      "sellerUserId": "seller_user_vyl34gxt",
+      "sellerId": "seller_ext_01",
+      "createdAt": "2026-04-13T03:03:53.341Z",
+      "expiresAt": "2026-05-13T03:03:53.341Z"
+    },
+    {
+      "id": "session_r9uo31hm",
+      "token": "290a722d76ddea7f05b83df087579b45c3051b10a090aa56",
+      "sellerUserId": "seller_user_vyl34gxt",
+      "sellerId": "seller_ext_01",
+      "createdAt": "2026-04-13T03:04:43.300Z",
+      "expiresAt": "2026-05-13T03:04:43.299Z"
+    },
+    {
+      "id": "session_8ey3i0bh",
+      "token": "1b76aac3099d3d26f3003b4c2306218842949e2023170e3f",
+      "sellerUserId": "seller_user_vyl34gxt",
+      "sellerId": "seller_ext_01",
+      "createdAt": "2026-04-13T03:06:44.008Z",
+      "expiresAt": "2026-05-13T03:06:44.008Z"
+    },
+    {
+      "id": "session_8s1l951i",
+      "token": "74ae170fdf528f737353de4a87f0022280b8659df6a29ad8",
+      "sellerUserId": "seller_user_vyl34gxt",
+      "sellerId": "seller_ext_01",
+      "createdAt": "2026-04-13T03:08:08.405Z",
+      "expiresAt": "2026-05-13T03:08:08.388Z"
+    },
+    {
+      "id": "session_wm0iafan",
+      "token": "963bdb52e9738346c64b0bde1c5fe880e86d53ec12e16fce",
+      "sellerUserId": "seller_user_vyl34gxt",
+      "sellerId": "seller_ext_01",
+      "createdAt": "2026-04-13T03:35:13.803Z",
+      "expiresAt": "2026-05-13T03:35:13.801Z"
+    },
+    {
+      "id": "session_ybm9q8dy",
+      "token": "dd506aa071686e00af4692f6b5cb3d42779596269099bc1d",
+      "sellerUserId": "seller_user_vyl34gxt",
+      "sellerId": "seller_ext_01",
+      "createdAt": "2026-04-13T03:44:59.229Z",
+      "expiresAt": "2026-05-13T03:44:59.229Z"
+    },
+    {
+      "id": "session_f4xtwh2u",
+      "token": "0de03ab3f34f861c2b53fc804ed586197059ebe6d1a5822b",
+      "sellerUserId": "seller_user_vyl34gxt",
+      "sellerId": "seller_ext_01",
+      "createdAt": "2026-04-13T04:07:16.235Z",
+      "expiresAt": "2026-05-13T04:07:16.231Z"
+    },
+    {
+      "id": "session_ekbrzmcq",
+      "token": "acf52c87797516e0e7b522dbe7f5dac81e3d55d89356cf1b",
+      "sellerUserId": "seller_user_vyl34gxt",
+      "sellerId": "seller_ext_01",
+      "createdAt": "2026-04-13T19:07:35.053Z",
+      "expiresAt": "2026-05-13T19:07:35.053Z"
+    },
+    {
+      "id": "session_yvutfzpa",
+      "token": "a2ffd1460f722809cbd49cb7ab6f218171bac4bd443e185a",
+      "sellerUserId": "seller_user_vyl34gxt",
+      "sellerId": "seller_ext_01",
+      "createdAt": "2026-04-13T19:15:32.115Z",
+      "expiresAt": "2026-05-13T19:15:32.115Z"
+    },
+    {
+      "id": "session_4cxuj0k0",
+      "token": "a36d0df038ee201f600f0560745c6825749c27c8db504d6c",
+      "sellerUserId": "seller_user_vyl34gxt",
+      "sellerId": "seller_ext_01",
+      "createdAt": "2026-04-13T19:25:46.334Z",
+      "expiresAt": "2026-05-13T19:25:46.333Z"
+    },
+    {
+      "id": "session_rjv54nmq",
+      "token": "967a6c89913dc60fc1f40d6eaab908e8a14ddf92c311418e",
+      "sellerUserId": "seller_user_vyl34gxt",
+      "sellerId": "seller_ext_01",
+      "createdAt": "2026-04-13T19:33:39.448Z",
+      "expiresAt": "2026-05-13T19:33:39.447Z"
+    }
+  ],
+  "appointments": [
+    {
+      "id": "appointment_vn1xwfc8",
+      "clientId": "client_7hl6olbm",
+      "date": "19/04/2026",
+      "notes": "Agendada automaticamente desde visita",
+      "status": "pending",
+      "createdAt": "2026-04-13T03:15:05.475Z"
+    },
+    {
+      "id": "appointment_zur182st",
+      "clientId": "client_7hl6olbm",
+      "date": "2026-04-30",
+      "notes": "Agendada automaticamente desde visita",
+      "status": "pending",
+      "createdAt": "2026-04-13T19:22:58.714Z"
+    }
+  ],
+  "products": [
+    {
+      "id": "product_8jvjyjf6",
+      "name": "Harina blanca",
+      "unitPrice": 14,
+      "active": true,
+      "createdAt": "2026-04-13T19:17:10.309Z"
+    },
+    {
+      "id": "product_37ckk6kb",
+      "name": "Malta",
+      "unitPrice": 8,
+      "active": true,
+      "createdAt": "2026-04-11T20:48:20.831Z"
+    },
+    {
+      "id": "product_5nx59va5",
+      "name": "Platanito",
+      "unitPrice": 4,
+      "active": true,
+      "createdAt": "2026-04-11T20:48:11.962Z"
+    }
+  ],
+  "sellerStocks": [
+    {
+      "id": "seller_stock_wn6mslyb",
+      "sellerId": "seller_ext_01",
+      "productId": "product_37ckk6kb",
+      "productName": "Malta",
+      "quantity": 9,
+      "notes": "Asignado desde inventario",
+      "updatedAt": "2026-04-13T19:18:20.189Z"
+    },
+    {
+      "id": "seller_stock_j8rdn4zk",
+      "sellerId": "seller_ext_01",
+      "productId": "product_5nx59va5",
+      "productName": "Platanito",
+      "quantity": 14,
+      "notes": "Asignado desde inventario",
+      "updatedAt": "2026-04-13T19:22:58.714Z"
+    },
+    {
+      "id": "seller_stock_zh180438",
+      "sellerId": "seller_ext_01",
+      "productId": "product_8jvjyjf6",
+      "productName": "Harina blanca",
+      "quantity": 50,
+      "notes": "Asignado desde inventario",
+      "updatedAt": "2026-04-13T19:18:02.114Z"
+    }
+  ],
+  "inventory": [
+    {
+      "id": "inv_1c9sh49m",
+      "productId": "product_37ckk6kb",
+      "productName": "Malta",
+      "quantity": 1,
+      "updatedAt": "2026-04-13T19:18:20.189Z"
+    },
+    {
+      "id": "inv_3kahyg5t",
+      "productId": "product_5nx59va5",
+      "productName": "Platanito",
+      "quantity": 5,
+      "updatedAt": "2026-04-13T19:18:14.068Z"
+    },
+    {
+      "id": "inv_dnzpvzmf",
+      "productId": "product_8jvjyjf6",
+      "productName": "Harina blanca",
+      "quantity": 1950,
+      "updatedAt": "2026-04-13T19:18:02.114Z"
+    }
+  ],
+  "productGoals": [],
+  "dailyClosures": [
+    {
+      "id": "daily_close_sbpbepc7",
+      "date": "2026-04-05",
+      "visitsCount": 1,
+      "clientsVisited": 1,
+      "totalSold": 12,
+      "totalCollected": 0,
+      "totalPending": 12,
+      "createdAt": "2026-04-13T19:01:42.378Z",
+      "source": "auto"
+    },
+    {
+      "id": "daily_close_ldb9uuui",
+      "date": "2026-04-06",
+      "visitsCount": 0,
+      "clientsVisited": 0,
+      "totalSold": 0,
+      "totalCollected": 0,
+      "totalPending": 0,
+      "createdAt": "2026-04-13T19:01:42.379Z",
+      "source": "auto"
+    },
+    {
+      "id": "daily_close_v1skm1x3",
+      "date": "2026-04-07",
+      "visitsCount": 0,
+      "clientsVisited": 0,
+      "totalSold": 0,
+      "totalCollected": 0,
+      "totalPending": 0,
+      "createdAt": "2026-04-13T19:01:42.379Z",
+      "source": "auto"
+    },
+    {
+      "id": "daily_close_lmqb22om",
+      "date": "2026-04-08",
+      "visitsCount": 0,
+      "clientsVisited": 0,
+      "totalSold": 0,
+      "totalCollected": 0,
+      "totalPending": 0,
+      "createdAt": "2026-04-13T19:01:42.379Z",
+      "source": "auto"
+    },
+    {
+      "id": "daily_close_w8pgriep",
+      "date": "2026-04-09",
+      "visitsCount": 0,
+      "clientsVisited": 0,
+      "totalSold": 0,
+      "totalCollected": 0,
+      "totalPending": 0,
+      "createdAt": "2026-04-13T19:01:42.379Z",
+      "source": "auto"
+    },
+    {
+      "id": "daily_close_wc9ykqoz",
+      "date": "2026-04-10",
+      "visitsCount": 0,
+      "clientsVisited": 0,
+      "totalSold": 0,
+      "totalCollected": 0,
+      "totalPending": 0,
+      "createdAt": "2026-04-13T19:01:42.379Z",
+      "source": "auto"
+    },
+    {
+      "id": "daily_close_pj1pc7jl",
+      "date": "2026-04-11",
+      "visitsCount": 3,
+      "clientsVisited": 1,
+      "totalSold": 335,
+      "totalCollected": 60,
+      "totalPending": 288,
+      "createdAt": "2026-04-13T19:01:42.379Z",
+      "source": "auto"
+    },
+    {
+      "id": "daily_close_09p88ru1",
+      "date": "2026-04-12",
+      "visitsCount": 0,
+      "clientsVisited": 0,
+      "totalSold": 0,
+      "totalCollected": 0,
+      "totalPending": 0,
+      "createdAt": "2026-04-13T19:01:42.379Z",
+      "source": "auto"
+    }
+  ],
+  "settings": {
+    "ownerWeeklyGoal": 0,
+    "lastAutoBackupDate": "2026-04-13"
+  }
+}

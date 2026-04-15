@@ -1,0 +1,19 @@
+{
+  "clients": [],
+  "visits": [],
+  "appointments": [],
+  "products": [],
+  "inventory": [],
+  "sellerStocks": [],
+  "sellers": [
+    { "id": "seller_owner", "name": "Propietario", "role": "owner", "active": true, "commissionRate": 0, "weeklyGoal": 0, "monthlyGoal": 0 },
+    { "id": "seller_ext_01", "name": "Edwin", "role": "seller", "active": true, "commissionRate": 5, "weeklyGoal": 0, "monthlyGoal": 0 }
+  ],
+  "sellerUsers": [
+    { "id": "seller_user_1", "sellerId": "seller_ext_01", "username": "edwin", "pinHash": "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4", "active": true, "createdAt": "2026-04-13T00:00:00.000Z" }
+  ],
+  "sellerSessions": [],
+  "productGoals": [],
+  "dailyClosures": [],
+  "settings": { "ownerWeeklyGoal": 0, "lastAutoBackupDate": "" }
+}
