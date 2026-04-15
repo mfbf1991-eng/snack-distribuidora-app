@@ -5,7 +5,23 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
-    "assetBundlePatterns": ["**/*"],
-    "android": { "package": "com.distribuidora.snack" }
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "android": {
+      "package": "com.distribuidora.snack"
+    },
+    "ios": {
+      "bundleIdentifier": "com.distribuidora.snack.admin",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "393b2fc5-489c-429c-8c6d-a692e84411d0"
+      }
+    },
+    "owner": "150291"
   }
 }

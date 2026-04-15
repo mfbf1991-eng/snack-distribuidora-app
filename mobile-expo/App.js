@@ -98,6 +98,7 @@ export default function App() {
   const [productForm, setProductForm] = useState({ name: "", unitPrice: "" });
   const [inventoryForm, setInventoryForm] = useState({ productId: "", productName: "", quantity: "" });
   const [inventorySelectedProductId, setInventorySelectedProductId] = useState("");
+  const [inventoryEditQty, setInventoryEditQty] = useState({});
   const [transferForm, setTransferForm] = useState({ sellerId: "", productId: "", quantity: "" });
   const [ownerProductGoalForm, setOwnerProductGoalForm] = useState({ productId: "", productName: "", targetQty: "" });
   const [visitClientQuery, setVisitClientQuery] = useState("");
@@ -792,6 +793,28 @@ export default function App() {
     }
   }
 
+  async function saveInventoryItemRow(item) {
+    if (!item?.productId || !item?.productName) return setError("Producto invalido.");
+    try {
+      const draftValue = inventoryEditQty[item.id];
+      const quantity = draftValue === undefined ? num(item.quantity) : num(draftValue);
+      await apiPost("/inventory", {
+        productId: item.productId,
+        productName: String(item.productName).trim(),
+        quantity
+      });
+      setInventoryEditQty((prev) => {
+        const next = { ...prev };
+        delete next[item.id];
+        return next;
+      });
+      await loadAll();
+      setToast("Cantidad de inventario actualizada");
+    } catch (e) {
+      setError(e.message || "No se pudo editar cantidad de inventario");
+    }
+  }
+
   async function transferInventoryToSeller() {
     if (!transferForm.sellerId || !transferForm.productId || num(transferForm.quantity) <= 0) {
       return setError("Selecciona vendedor, producto y cantidad para transferir.");
@@ -1326,6 +1349,18 @@ export default function App() {
                   <View style={{ flex: 1 }}>
                     <Text style={styles.dropdownTitle}>{item.productName}</Text>
                     <Text style={styles.dropdownSub}>Disponible: {num(item.quantity).toFixed(2)} unid</Text>
+                  </View>
+                  <View style={styles.invRowActions}>
+                    <TextInput
+                      style={styles.invQtyInput}
+                      placeholder="Editar"
+                      value={String(inventoryEditQty[item.id] ?? num(item.quantity))}
+                      onChangeText={(t) => setInventoryEditQty((prev) => ({ ...prev, [item.id]: t }))}
+                      keyboardType="decimal-pad"
+                    />
+                    <Pressable style={styles.btnMini} onPress={() => saveInventoryItemRow(item)}>
+                      <Text style={styles.btnT}>Editar</Text>
+                    </Pressable>
                   </View>
                 </View>
               ))}
@@ -1956,6 +1991,8 @@ const styles = StyleSheet.create({
   dropdownTitle: { color: "#2f251d", fontWeight: "700" },
   dropdownSub: { color: "#7d7266", marginTop: 2, fontSize: 12 },
   itemLine: { marginTop: 8, borderWidth: 1, borderColor: "#e5d8c5", borderRadius: 10, padding: 8, flexDirection: "row", gap: 8, alignItems: "center", backgroundColor: "#fffdf9" },
+  invRowActions: { flexDirection: "row", alignItems: "center", gap: 8 },
+  invQtyInput: { width: 88, borderWidth: 1, borderColor: "#dfcfbb", borderRadius: 8, paddingHorizontal: 8, paddingVertical: 8, backgroundColor: "#fff", color: "#2f251d", fontWeight: "700", textAlign: "center" },
   remainingInput: { width: 96, borderWidth: 1, borderColor: "#dfcfbb", borderRadius: 8, paddingHorizontal: 8, paddingVertical: 8, backgroundColor: "#fff", color: "#2f251d", fontWeight: "700", textAlign: "center" },
   inputError: { borderColor: "#c13a2a", borderWidth: 2 },
   remainingInputError: { borderColor: "#c13a2a", borderWidth: 2, backgroundColor: "#fff5f3" },
