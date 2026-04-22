@@ -10,19 +10,39 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const webDistPath = path.resolve(__dirname, "..", "dist");
 const webIndexPath = path.join(webDistPath, "index.html");
-const dbPath = process.env.DB_PATH
-  ? path.resolve(process.env.DB_PATH)
-  : path.join(__dirname, "data", "db.json");
-const backupsDir = process.env.BACKUPS_DIR
-  ? path.resolve(process.env.BACKUPS_DIR)
-  : path.join(__dirname, "data", "backups");
 const isProduction = String(process.env.NODE_ENV || "").trim().toLowerCase() === "production";
 const allowSystemMutationInProd = String(process.env.ALLOW_SYSTEM_MUTATION_IN_PROD || "").trim().toLowerCase() === "true";
 const systemMutationToken = String(process.env.SYSTEM_MUTATION_TOKEN || "").trim();
+const forcePersistentPaths = String(process.env.FORCE_PERSISTENT_PATHS || "true").trim().toLowerCase() !== "false";
+
+function isTmpLikePath(value) {
+  const normalized = String(value || "").trim().replace(/\\/g, "/").toLowerCase();
+  return normalized.startsWith("/tmp/") || normalized === "/tmp" || normalized.includes("/tmp/");
+}
+
+function resolveDataPath(envValue, fallbackLocalPath, fallbackProdPath) {
+  const raw = String(envValue || "").trim();
+  const candidate = raw ? path.resolve(raw) : isProduction ? fallbackProdPath : fallbackLocalPath;
+  if (isProduction && forcePersistentPaths && isTmpLikePath(candidate)) {
+    return fallbackProdPath;
+  }
+  return candidate;
+}
+
+const dbPath = resolveDataPath(process.env.DB_PATH, path.join(__dirname, "data", "db.json"), "/data/db.json");
+const backupsDir = resolveDataPath(process.env.BACKUPS_DIR, path.join(__dirname, "data", "backups"), "/data/backups");
 const DEFAULT_SUGGESTION_MIN = 8;
 
 const app = express();
 const PORT = process.env.PORT || 4000;
+
+if (isProduction) {
+  console.log(`[config] DB_PATH=${dbPath}`);
+  console.log(`[config] BACKUPS_DIR=${backupsDir}`);
+  if (dbPath.startsWith("/tmp") || backupsDir.startsWith("/tmp")) {
+    console.warn("[config] WARNING: rutas temporales detectadas en produccion.");
+  }
+}
 
 app.use(cors());
 app.use(express.json());
