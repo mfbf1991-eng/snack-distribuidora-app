@@ -273,6 +273,55 @@ function normalizeClient(rawClient = {}) {
   };
 }
 
+function normalizeProspect(rawProspect = {}) {
+  return {
+    id: String(rawProspect.id || uid("prospect")).trim(),
+    tradeName: String(rawProspect.tradeName || rawProspect.name || "").trim(),
+    buyerName: String(rawProspect.buyerName || rawProspect.contact || "").trim(),
+    phone: String(rawProspect.phone || "").trim(),
+    notes: String(rawProspect.notes || "").trim(),
+    convertedClientId: String(rawProspect.convertedClientId || "").trim(),
+    convertedAt: String(rawProspect.convertedAt || "").trim(),
+    createdAt: String(rawProspect.createdAt || nowIso())
+  };
+}
+
+function autoConvertProspectsForClient(data, client) {
+  const normalizedClient = normalizeClient(client || {});
+  const clientTrade = String(normalizedClient.tradeName || normalizedClient.name || "").trim().toLowerCase();
+  if (!clientTrade) return;
+  const prospects = Array.isArray(data.prospects) ? data.prospects.map(normalizeProspect) : [];
+  let changed = false;
+  for (const prospect of prospects) {
+    if (prospect.convertedClientId) continue;
+    const prospectTrade = String(prospect.tradeName || "").trim().toLowerCase();
+    if (!prospectTrade) continue;
+    if (prospectTrade !== clientTrade) continue;
+    prospect.convertedClientId = normalizedClient.id;
+    prospect.convertedAt = nowIso();
+    changed = true;
+  }
+  if (changed) data.prospects = prospects;
+}
+
+function normalizeClientMovement(rawMovement = {}) {
+  const type = String(rawMovement.type || "ajuste").trim().toLowerCase();
+  const allowedTypes = new Set(["vencido", "danado", "devolucion", "ajuste", "otro"]);
+  const movementType = allowedTypes.has(type) ? type : "ajuste";
+  return {
+    id: String(rawMovement.id || uid("mov")).trim(),
+    clientId: String(rawMovement.clientId || "").trim(),
+    date: String(rawMovement.date || localDateIso()).trim(),
+    type: movementType,
+    productId: String(rawMovement.productId || "").trim(),
+    productName: String(rawMovement.productName || "").trim(),
+    quantity: Math.max(0, parseNumber(rawMovement.quantity)),
+    notes: String(rawMovement.notes || "").trim(),
+    createdBySellerId: String(rawMovement.createdBySellerId || "").trim(),
+    createdAt: String(rawMovement.createdAt || nowIso())
+  };
+}
+
 function hasDuplicateClient(clients, candidate, options = {}) {
   const excludeId = String(options.excludeId || "").trim();
   const scopeSellerId = String(options.scopeSellerId || "").trim();
@@ -446,7 +495,7 @@ function ensureDailyClosures(data) {
 
 function readDb() {
   if (!fs.existsSync(dbPath)) {
-    fs.writeFileSync(dbPath, JSON.stringify({ clients: [], visits: [], sellers: [], sellerUsers: [], sellerSessions: [], appointments: [], products: [], sellerStocks: [], inventory: [], productGoals: [], dailyClosures: [], settings: { ownerWeeklyGoal: 0, lastAutoBackupDate: "" } }, null, 2));
+    fs.writeFileSync(dbPath, JSON.stringify({ clients: [], prospects: [], visits: [], sellers: [], sellerUsers: [], sellerSessions: [], appointments: [], products: [], sellerStocks: [], inventory: [], productGoals: [], clientMovements: [], dailyClosures: [], settings: { ownerWeeklyGoal: 0, lastAutoBackupDate: "" } }, null, 2));
   }
 
   const raw = fs.readFileSync(dbPath, "utf-8");
@@ -454,6 +503,7 @@ function readDb() {
 
   return {
     clients: Array.isArray(parsed.clients) ? parsed.clients : [],
+    prospects: Array.isArray(parsed.prospects) ? parsed.prospects.map(normalizeProspect) : [],
     visits: Array.isArray(parsed.visits) ? parsed.visits : [],
     sellers: Array.isArray(parsed.sellers) ? parsed.sellers : [],
     sellerUsers: Array.isArray(parsed.sellerUsers) ? parsed.sellerUsers : [],
@@ -463,6 +513,7 @@ function readDb() {
     sellerStocks: Array.isArray(parsed.sellerStocks) ? parsed.sellerStocks : [],
     inventory: Array.isArray(parsed.inventory) ? parsed.inventory : [],
     productGoals: Array.isArray(parsed.productGoals) ? parsed.productGoals : [],
+    clientMovements: Array.isArray(parsed.clientMovements) ? parsed.clientMovements.map(normalizeClientMovement) : [],
     dailyClosures: Array.isArray(parsed.dailyClosures) ? parsed.dailyClosures : [],
     settings:
       typeof parsed.settings === "object" && parsed.settings
@@ -812,6 +863,7 @@ function buildSellerAppData(data, sellerId) {
   const sellers = (Array.isArray(data.sellers) ? data.sellers : []).map(normalizeSeller);
   const overview = computeSellersOverview(data, sellers).find((item) => item.sellerId === sellerId);
   if (!overview) return null;
+  const assignedClientIds = new Set((overview.assignedClients || []).map((client) => String(client.id)));
   return {
     seller: {
       id: overview.sellerId,
@@ -836,6 +888,10 @@ function buildSellerAppData(data, sellerId) {
     visitsHistory: overview.visitHistory,
     stock: overview.stock,
     products: (data.products || []).map(normalizeProduct).filter((p) => p.active !== false),
+    clientMovements: (data.clientMovements || [])
+      .map(normalizeClientMovement)
+      .filter((movement) => assignedClientIds.has(String(movement.clientId)))
+      .sort((a, b) => new Date(`${b.date}T00:00:00`) - new Date(`${a.date}T00:00:00`)),
     productGoals: (data.productGoals || [])
       .map(normalizeProductGoal)
       .filter((goal) => goal.ownerType === "seller" && goal.ownerId === sellerId),
@@ -927,6 +983,7 @@ app.post("/api/system/db-import", (req, res) => {
 
   const normalized = {
     clients: Array.isArray(payload.clients) ? payload.clients : [],
+    prospects: Array.isArray(payload.prospects) ? payload.prospects : [],
     visits: Array.isArray(payload.visits) ? payload.visits : [],
     sellers: Array.isArray(payload.sellers) ? payload.sellers : [],
     sellerUsers: Array.isArray(payload.sellerUsers) ? payload.sellerUsers : [],
@@ -936,6 +993,7 @@ app.post("/api/system/db-import", (req, res) => {
     sellerStocks: Array.isArray(payload.sellerStocks) ? payload.sellerStocks : [],
     inventory: Array.isArray(payload.inventory) ? payload.inventory : [],
     productGoals: Array.isArray(payload.productGoals) ? payload.productGoals : [],
+    clientMovements: Array.isArray(payload.clientMovements) ? payload.clientMovements : [],
     dailyClosures: Array.isArray(payload.dailyClosures) ? payload.dailyClosures : [],
     settings: typeof payload.settings === "object" && payload.settings ? payload.settings : { ownerWeeklyGoal: 0, lastAutoBackupDate: "" }
   };
@@ -945,6 +1003,7 @@ app.post("/api/system/db-import", (req, res) => {
     ok: true,
     summary: {
       clients: normalized.clients.length,
+      prospects: normalized.prospects.length,
       visits: normalized.visits.length,
       products: normalized.products.length,
       inventory: normalized.inventory.length
@@ -1008,12 +1067,19 @@ app.get("/api/data", (_req, res) => {
 
   res.json({
     clients,
-    visits: data.visits,
+    prospects: (data.prospects || []).map(normalizeProspect),
+    visits: (data.visits || []).map((visit) => ({
+      ...visit,
+      createdBySellerName: String(visit?.createdBySellerId || "").trim()
+        ? sellerMap.get(String(visit.createdBySellerId))?.name || "Vendedor"
+        : "Admin"
+    })),
     sellers,
     appointments: data.appointments,
     products: data.products.map(normalizeProduct),
     inventory: (data.inventory || []).map(normalizeInventoryItem),
     productGoals: (data.productGoals || []).map(normalizeProductGoal),
+    clientMovements: (data.clientMovements || []).map(normalizeClientMovement),
     ownerProductGoalProgress: computeProductGoalProgress(data, "owner", ""),
     dailyClosures: (data.dailyClosures || []).slice(-30),
     sellerUsers: (data.sellerUsers || []).map(normalizeSellerUser).map((user) => ({ id: user.id, sellerId: user.sellerId, username: user.username, active: user.active })),
@@ -1339,8 +1405,59 @@ app.delete("/api/clients/:id", (req, res) => {
 
   data.clients = data.clients.filter((client) => String(client.id) !== clientId);
   data.appointments = (data.appointments || []).filter((appointment) => String(appointment.clientId) !== clientId);
+  data.clientMovements = (data.clientMovements || []).filter((movement) => String(movement.clientId) !== clientId);
   writeDb(data);
   return res.json({ ok: true });
+});
+
+app.get("/api/clients/:id/movements", (req, res) => {
+  const clientId = String(req.params.id || "").trim();
+  if (!clientId) return res.status(400).json({ error: "ID de cliente invalido." });
+
+  const data = readDb();
+  const client = (data.clients || []).map(normalizeClient).find((item) => String(item.id) === clientId);
+  if (!client) return res.status(404).json({ error: "Cliente no encontrado." });
+
+  const movements = (data.clientMovements || [])
+    .map(normalizeClientMovement)
+    .filter((movement) => String(movement.clientId) === clientId)
+    .sort((a, b) => new Date(`${b.date}T00:00:00`) - new Date(`${a.date}T00:00:00`));
+
+  return res.status(200).json({ movements });
+});
+
+app.post("/api/clients/:id/movements", (req, res) => {
+  const clientId = String(req.params.id || "").trim();
+  if (!clientId) return res.status(400).json({ error: "ID de cliente invalido." });
+
+  const data = readDb();
+  const client = (data.clients || []).map(normalizeClient).find((item) => String(item.id) === clientId);
+  if (!client) return res.status(404).json({ error: "Cliente no encontrado." });
+
+  const body = req.body || {};
+  const movement = normalizeClientMovement({
+    id: uid("mov"),
+    clientId,
+    date: String(body.date || localDateIso()).trim(),
+    type: String(body.type || "ajuste").trim().toLowerCase(),
+    productId: String(body.productId || "").trim(),
+    productName: String(body.productName || "").trim(),
+    quantity: body.quantity,
+    notes: body.notes,
+    createdBySellerId: String(body.createdBySellerId || "").trim(),
+    createdAt: nowIso()
+  });
+
+  if (!movement.productName) {
+    return res.status(400).json({ error: "Producto obligatorio para registrar movimiento." });
+  }
+  if (movement.quantity <= 0) {
+    return res.status(400).json({ error: "Cantidad debe ser mayor a 0." });
+  }
+
+  data.clientMovements = [movement, ...(Array.isArray(data.clientMovements) ? data.clientMovements : [])];
+  writeDb(data);
+  return res.status(201).json({ movement });
 });
 
 app.get("/api/sellers", (_req, res) => {
@@ -1441,6 +1558,46 @@ app.post("/api/seller-app/clients", (req, res) => {
   data.clients.unshift(newClient);
   writeDb(data);
   return res.status(201).json(newClient);
+});
+
+app.post("/api/seller-app/clients/:id/movements", (req, res) => {
+  const data = readDb();
+  const ctx = getSellerAuthContext(data, req);
+  if (!ctx) return res.status(401).json({ error: "Sesion invalida." });
+
+  const clientId = String(req.params.id || "").trim();
+  if (!clientId) return res.status(400).json({ error: "ID de cliente invalido." });
+
+  const client = (data.clients || []).map(normalizeClient).find((item) => String(item.id) === clientId);
+  if (!client) return res.status(404).json({ error: "Cliente no encontrado." });
+  if (client.managedByType !== "seller" || client.managedBySellerId !== ctx.seller.id) {
+    return res.status(403).json({ error: "No puedes registrar cambios para clientes de otro vendedor." });
+  }
+
+  const body = req.body || {};
+  const movement = normalizeClientMovement({
+    id: uid("mov"),
+    clientId,
+    date: String(body.date || localDateIso()).trim(),
+    type: String(body.type || "ajuste").trim().toLowerCase(),
+    productId: String(body.productId || "").trim(),
+    productName: String(body.productName || "").trim(),
+    quantity: body.quantity,
+    notes: body.notes,
+    createdBySellerId: ctx.seller.id,
+    createdAt: nowIso()
+  });
+
+  if (!movement.productName) {
+    return res.status(400).json({ error: "Producto obligatorio para registrar movimiento." });
+  }
+  if (movement.quantity <= 0) {
+    return res.status(400).json({ error: "Cantidad debe ser mayor a 0." });
+  }
+
+  data.clientMovements = [movement, ...(Array.isArray(data.clientMovements) ? data.clientMovements : [])];
+  writeDb(data);
+  return res.status(201).json({ movement });
 });
 
 app.post("/api/seller-app/goals", (req, res) => {
@@ -1619,6 +1776,10 @@ app.post("/api/seller-app/visits", (req, res) => {
     nextVisitDate: String(body.nextVisitDate || ""),
     notes: String(body.notes || "").trim()
   };
+
+  if (!isDegustation && client) {
+    autoConvertProspectsForClient(data, client);
+  }
 
   // Discount stock from seller's pronta-entrega inventory.
   if (visitType !== "count_only") {
@@ -1813,43 +1974,71 @@ app.post("/api/sellers/:sellerId/clients/manage", (req, res) => {
 
 app.post("/api/visits", (req, res) => {
   const body = req.body || {};
-
-  if (!body.clientId || !body.date) {
-    return res.status(400).json({ error: "Cliente y fecha son obligatorios." });
-  }
+  const visitTypeInput = String(body.visitType || "dispatch").trim().toLowerCase();
+  const visitType = visitTypeInput === "count_only" ? "count_only" : visitTypeInput === "degustacion" ? "degustacion" : "dispatch";
+  const isCountOnly = visitType === "count_only";
+  const isDegustation = visitType === "degustacion";
+  if (!body.date) return res.status(400).json({ error: "Fecha obligatoria." });
 
   const data = readDb();
-  const client = data.clients.find((item) => item.id === body.clientId);
+  const clientId = String(body.clientId || "").trim();
+  const client = clientId ? data.clients.find((item) => String(item.id) === clientId) : null;
+  if (clientId && !client) return res.status(404).json({ error: "Cliente no encontrado." });
+  if (!isDegustation && !clientId) return res.status(400).json({ error: "Cliente obligatorio para esta visita." });
 
-  if (!client) {
-    return res.status(404).json({ error: "Cliente no encontrado." });
+  let prospectId = "";
+  let prospectTradeName = "";
+  let prospectBuyerName = "";
+  if (isDegustation && !clientId) {
+    const tradeName = String(body.prospectTradeName || body.prospectName || "").trim();
+    const buyerName = String(body.prospectBuyerName || "").trim();
+    const phone = String(body.prospectPhone || "").trim();
+    if (!tradeName) {
+      return res.status(400).json({ error: "En degustacion debes seleccionar cliente o indicar nombre del comercio prospecto." });
+    }
+    const existingProspects = Array.isArray(data.prospects) ? data.prospects.map(normalizeProspect) : [];
+    const normalizedTrade = tradeName.toLowerCase();
+    const normalizedBuyer = buyerName.toLowerCase();
+    const existing =
+      existingProspects.find((item) => String(item.id) === String(body.prospectId || "").trim()) ||
+      existingProspects.find((item) => String(item.tradeName || "").trim().toLowerCase() === normalizedTrade && String(item.buyerName || "").trim().toLowerCase() === normalizedBuyer);
+    const prospect = existing ||
+      normalizeProspect({
+        tradeName,
+        buyerName,
+        phone,
+        notes: String(body.prospectNotes || "").trim()
+      });
+    if (!existing) data.prospects = [prospect, ...existingProspects];
+    prospectId = prospect.id;
+    prospectTradeName = prospect.tradeName;
+    prospectBuyerName = prospect.buyerName;
   }
+
   const hasAmountCollected = body.amountCollected !== undefined && body.amountCollected !== null && String(body.amountCollected).trim() !== "";
-  if (!hasAmountCollected) {
+  if (!isDegustation && !hasAmountCollected) {
     return res.status(400).json({ error: "Cantidad recibida es obligatoria (usa 0 si no cobraste)." });
   }
-  const amountCollected = parseNumber(body.amountCollected);
+  const amountCollected = isDegustation ? 0 : parseNumber(body.amountCollected);
 
   const delivered = parseNumber(body.delivered);
   const remaining = parseNumber(body.remaining);
-  const clientVisits = getClientVisits(data.visits, body.clientId);
+  const clientVisits = clientId ? getClientVisits(data.visits, clientId) : [];
   const soldAmount = calculateSold(clientVisits, remaining, delivered);
-  const visitType = String(body.visitType || "dispatch").trim().toLowerCase() === "count_only" ? "count_only" : "dispatch";
-
-  const saleType = String(body.saleType || body.paymentType || "consignado");
-  if (visitType === "count_only" && saleType === "consignado") {
+  const saleType = isDegustation ? "degustacion" : String(body.saleType || body.paymentType || "consignado");
+  if (isCountOnly && saleType === "consignado") {
     return res.status(400).json({ error: "En visita solo conteo, el tipo de cobro no puede ser consignado." });
   }
-  const collectionMethod = String(body.collectionMethod || "").trim().toLowerCase();
-  const boletoDays = saleType === "boleto" ? Number(body.boletoDays || 7) : 0;
+  const collectionMethod = isDegustation ? "" : String(body.collectionMethod || "").trim().toLowerCase();
+  const boletoDays = !isDegustation && saleType === "boleto" ? Number(body.boletoDays || 7) : 0;
   const safeBoletoDays = boletoDays === 14 ? 14 : saleType === "boleto" ? 7 : 0;
 
   const rawItems = Array.isArray(body.items) ? body.items : [];
   const items = rawItems
     .map((item) => {
       const quantity = parseNumber(item.quantity);
-      const unitPrice = parseNumber(item.unitPrice);
-      const total = parseNumber(item.total || quantity * unitPrice);
+      const unitPrice = isDegustation ? 0 : parseNumber(item.unitPrice);
+      const total = isDegustation ? 0 : parseNumber(item.total || quantity * unitPrice);
       const hasRemaining = item.remaining !== undefined && item.remaining !== null && String(item.remaining).trim() !== "";
       return {
         productId: String(item.productId || "").trim(),
@@ -1860,18 +2049,18 @@ app.post("/api/visits", (req, res) => {
         remaining: hasRemaining ? parseNumber(item.remaining) : null
       };
     })
-    .filter((item) => item.productName && (visitType === "count_only" ? true : item.quantity > 0));
+    .filter((item) => item.productName && (isCountOnly ? true : item.quantity > 0));
   if (items.length === 0) {
-    return res.status(400).json({ error: visitType === "count_only" ? "Debes agregar al menos un producto para conteo." : "Debes agregar al menos un producto despachado." });
+    return res.status(400).json({ error: isCountOnly ? "Debes agregar al menos un producto para conteo." : "Debes agregar al menos un producto despachado." });
   }
-  const missingRemainingItems = items.filter((item) => item.remaining === null || item.remaining === undefined);
-  if (missingRemainingItems.length > 0) {
+  const missingRemainingItems = isDegustation ? [] : items.filter((item) => item.remaining === null || item.remaining === undefined);
+  if (!isDegustation && missingRemainingItems.length > 0) {
     const names = missingRemainingItems.map((item) => item.productName).join(", ");
     return res.status(400).json({ error: `Falta 'restante' para: ${names}.` });
   }
 
-  const totalUnits = visitType === "count_only" ? 0 : items.reduce((acc, item) => acc + item.quantity, 0);
-  const totalValue = visitType === "count_only" ? 0 : items.reduce((acc, item) => acc + item.total, 0);
+  const totalUnits = isCountOnly ? 0 : items.reduce((acc, item) => acc + item.quantity, 0);
+  const totalValue = isCountOnly || isDegustation ? 0 : items.reduce((acc, item) => acc + item.total, 0);
 
   let dueDate = "";
   if (saleType === "boleto" && safeBoletoDays > 0) {
@@ -1883,17 +2072,20 @@ app.post("/api/visits", (req, res) => {
   const newVisit = {
     id: uid("visit"),
     date: String(body.date),
-    clientId: String(body.clientId),
+    clientId,
+    prospectId,
+    prospectTradeName,
+    prospectBuyerName,
     visitType,
     delivered: items.length ? totalUnits : delivered,
     remaining,
-    soldAmount: items.length ? totalValue : (visitType === "count_only" ? 0 : soldAmount),
-    soldUnits: items.length ? totalUnits : (visitType === "count_only" ? 0 : soldAmount),
-    totalValue: items.length ? totalValue : (visitType === "count_only" ? 0 : soldAmount),
+    soldAmount: isCountOnly || isDegustation ? 0 : (items.length ? totalValue : soldAmount),
+    soldUnits: isCountOnly || isDegustation ? 0 : (items.length ? totalUnits : soldAmount),
+    totalValue: isCountOnly || isDegustation ? 0 : (items.length ? totalValue : soldAmount),
     items,
     amountCollected,
     collectionMethod: collectionMethod || (amountCollected > 0 ? "efectivo" : ""),
-    paymentType: String(body.paymentType || saleType || "consignado"),
+    paymentType: isDegustation ? "degustacion" : String(body.paymentType || saleType || "consignado"),
     saleType,
     boletoDays: safeBoletoDays,
     dueDate,
@@ -1905,8 +2097,8 @@ app.post("/api/visits", (req, res) => {
     notes: String(body.notes || "").trim()
   };
 
-  // Discount from global inventory for admin dispatch visits.
-  if (visitType !== "count_only") {
+  // Discount from global inventory for admin dispatch/degustacion visits.
+  if (!isCountOnly) {
     const inventory = (Array.isArray(data.inventory) ? data.inventory : []).map(normalizeInventoryItem);
     for (const line of items) {
       const byId = line.productId
@@ -1930,13 +2122,15 @@ app.post("/api/visits", (req, res) => {
 
   data.visits.push(newVisit);
 
-  const pendingAppointments = data.appointments
-    .filter((appt) => appt.clientId === newVisit.clientId && appt.status === "pending")
-    .sort((a, b) => new Date(a.date) - new Date(b.date));
-  const toClose = pendingAppointments.find((appt) => new Date(`${appt.date}T00:00:00`) <= new Date(`${newVisit.date}T23:59:59`));
-  if (toClose) {
-    toClose.status = "done";
-    toClose.closedAt = new Date().toISOString();
+  if (newVisit.clientId) {
+    const pendingAppointments = data.appointments
+      .filter((appt) => appt.clientId === newVisit.clientId && appt.status === "pending")
+      .sort((a, b) => new Date(a.date) - new Date(b.date));
+    const toClose = pendingAppointments.find((appt) => new Date(`${appt.date}T00:00:00`) <= new Date(`${newVisit.date}T23:59:59`));
+    if (toClose) {
+      toClose.status = "done";
+      toClose.closedAt = new Date().toISOString();
+    }
   }
 
   writeDb(data);

@@ -110,11 +110,12 @@ export default function App() {
   const [lastBackupFile, setLastBackupFile] = useState("");
   const [showPanelWeekDetails, setShowPanelWeekDetails] = useState(false);
   const [showPanelDebtDetails, setShowPanelDebtDetails] = useState(false);
+  const [savingMovement, setSavingMovement] = useState(false);
 
-  const [data, setData] = useState({ clients: [], visits: [], sellers: [], sellerOverview: [], appointments: [], products: [], inventory: [], productGoals: [], ownerProductGoalProgress: [], settings: { ownerWeeklyGoal: 0 }, dashboard: { totalSoldThisWeek: 0, totalDebt: 0, clientsNeedingVisit: [], topClients: [], ownerWeeklyGoal: 0, ownerWeeklyRemaining: 0, ownerWeeklyProgressPct: 0 } });
+  const [data, setData] = useState({ clients: [], prospects: [], visits: [], sellers: [], sellerOverview: [], appointments: [], products: [], inventory: [], productGoals: [], clientMovements: [], ownerProductGoalProgress: [], settings: { ownerWeeklyGoal: 0 }, dashboard: { totalSoldThisWeek: 0, totalDebt: 0, clientsNeedingVisit: [], topClients: [], ownerWeeklyGoal: 0, ownerWeeklyRemaining: 0, ownerWeeklyProgressPct: 0 } });
 
   const [clientForm, setClientForm] = useState(CLIENT_FORM_INITIAL);
-  const [visitForm, setVisitForm] = useState({ date: today(), clientId: "", amountCollected: "", collectionMethod: "efectivo", saleType: "consignado", boletoDays: 7, nextVisitDate: "", notes: "" });
+  const [visitForm, setVisitForm] = useState({ date: today(), clientId: "", prospectTradeName: "", prospectBuyerName: "", prospectPhone: "", amountCollected: "", collectionMethod: "efectivo", saleType: "consignado", boletoDays: 7, nextVisitDate: "", notes: "" });
   const [visitItems, setVisitItems] = useState([]);
   const [visitItemDraft, setVisitItemDraft] = useState({ productId: "", productQuery: "", quantity: "", unitPrice: "" });
   const [showProductSuggestions, setShowProductSuggestions] = useState(false);
@@ -139,18 +140,27 @@ export default function App() {
   const [showScheduleDatePicker, setShowScheduleDatePicker] = useState(false);
   const [showVisitScheduleDatePicker, setShowVisitScheduleDatePicker] = useState(false);
   const [showVisitFilterDatePicker, setShowVisitFilterDatePicker] = useState(false);
+  const [showMovementDatePicker, setShowMovementDatePicker] = useState(false);
   const [invoiceForm, setInvoiceForm] = useState({ invoiceNumber: "" });
   const [sellerGoalsForm, setSellerGoalsForm] = useState({ weeklyGoal: "", monthlyGoal: "", commissionRate: "" });
   const [sellerStockForm, setSellerStockForm] = useState({ productId: "", productName: "", quantity: "", notes: "" });
   const [sellerClientFilter, setSellerClientFilter] = useState("");
   const [ownerGoalForm, setOwnerGoalForm] = useState({ ownerWeeklyGoal: "" });
+  const [clientMovementForm, setClientMovementForm] = useState({
+    date: today(),
+    type: "ajuste",
+    productId: "",
+    productName: "",
+    quantity: "",
+    notes: ""
+  });
 
   async function loadAll() {
     try {
       setLoading(true);
       setError("");
       const p = await apiGet("/data");
-      setData({ clients: p.clients || [], visits: p.visits || [], sellers: p.sellers || [], sellerOverview: p.sellerOverview || [], appointments: p.appointments || [], products: p.products || [], inventory: p.inventory || [], productGoals: p.productGoals || [], ownerProductGoalProgress: p.ownerProductGoalProgress || [], settings: p.settings || { ownerWeeklyGoal: 0 }, dashboard: p.dashboard || { totalSoldThisWeek: 0, totalDebt: 0, clientsNeedingVisit: [], topClients: [], ownerWeeklyGoal: 0, ownerWeeklyRemaining: 0, ownerWeeklyProgressPct: 0 } });
+      setData({ clients: p.clients || [], prospects: p.prospects || [], visits: p.visits || [], sellers: p.sellers || [], sellerOverview: p.sellerOverview || [], appointments: p.appointments || [], products: p.products || [], inventory: p.inventory || [], productGoals: p.productGoals || [], clientMovements: p.clientMovements || [], ownerProductGoalProgress: p.ownerProductGoalProgress || [], settings: p.settings || { ownerWeeklyGoal: 0 }, dashboard: p.dashboard || { totalSoldThisWeek: 0, totalDebt: 0, clientsNeedingVisit: [], topClients: [], ownerWeeklyGoal: 0, ownerWeeklyRemaining: 0, ownerWeeklyProgressPct: 0 } });
       setOwnerGoalForm({ ownerWeeklyGoal: String(num((p.settings || {}).ownerWeeklyGoal)) });
     } catch (e) { setError(e.message || "Error"); } finally { setLoading(false); }
   }
@@ -238,6 +248,12 @@ export default function App() {
     const backendAvailability = Array.isArray(selectedClient.productAvailability) ? selectedClient.productAvailability : [];
     return backendAvailability.length > 0 ? backendAvailability : computeAvailabilityFromVisits(data.visits, selectedClient.id);
   }, [selectedClient, data.visits]);
+  const selectedClientMovements = useMemo(() => {
+    if (!selectedClient) return [];
+    return (data.clientMovements || [])
+      .filter((movement) => String(movement.clientId) === String(selectedClient.id))
+      .sort((a, b) => new Date(`${b.date}T00:00:00`) - new Date(`${a.date}T00:00:00`));
+  }, [selectedClient, data.clientMovements]);
 
   const sales = useMemo(() => {
     if (!selectedClient) return null;
@@ -540,11 +556,15 @@ export default function App() {
     return data.visits
       .map((visit) => {
         const client = data.clients.find((c) => c.id === visit.clientId) || {};
+        const seller = data.sellers.find((s) => s.id === visit.createdBySellerId);
         return {
           ...visit,
-          clientName: client.tradeName || client.name || "Cliente",
-          clientBuyer: client.buyerName || client.contact || "",
-          clientInternalId: client.internalId || ""
+          clientName: client.tradeName || client.name || visit.prospectTradeName || "Prospecto",
+          clientBuyer: client.buyerName || client.contact || visit.prospectBuyerName || "",
+          clientInternalId: client.internalId || "",
+          sellerName:
+            visit.createdBySellerName ||
+            (visit.createdBySellerId ? (seller?.name || "Vendedor") : "Admin")
         };
       })
       .filter((visit) => {
@@ -559,7 +579,7 @@ export default function App() {
         if (byName !== 0) return byName;
         return new Date(b.date) - new Date(a.date);
       });
-  }, [data.visits, data.clients, visitFilters]);
+  }, [data.visits, data.clients, data.sellers, visitFilters]);
 
   const upcomingAppointments = useMemo(() => {
     const nowIso = today();
@@ -661,6 +681,12 @@ export default function App() {
     setVisitFilters((p) => ({ ...p, date: selectedDate.toISOString().slice(0, 10) }));
   }
 
+  function onChangeMovementDate(_event, selectedDate) {
+    setShowMovementDatePicker(false);
+    if (!selectedDate) return;
+    setClientMovementForm((p) => ({ ...p, date: selectedDate.toISOString().slice(0, 10) }));
+  }
+
   function selectVisitProduct(product) {
     setVisitItemDraft((prev) => ({
       ...prev,
@@ -674,7 +700,7 @@ export default function App() {
   function addVisitItem() {
     const productName = String(visitItemDraft.productQuery || "").trim();
     const quantity = visitEntryType === "count_only" ? 0 : num(visitItemDraft.quantity);
-    const unitPrice = visitEntryType === "count_only" ? 0 : num(visitItemDraft.unitPrice);
+    const unitPrice = visitEntryType === "dispatch" ? num(visitItemDraft.unitPrice) : 0;
     if (!productName || (visitEntryType !== "count_only" && quantity <= 0)) {
       setError(visitEntryType === "count_only" ? "Producto obligatorio." : "Producto y cantidad son obligatorios.");
       return;
@@ -708,18 +734,21 @@ export default function App() {
   }
 
   function getVisitValidationState() {
-    const missingClient = !visitForm.clientId;
+    const isDegustation = visitEntryType === "degustacion";
+    const missingClient = !isDegustation && !visitForm.clientId;
+    const missingProspect = isDegustation && !visitForm.clientId && !String(visitForm.prospectTradeName || "").trim();
     const missingDate = !visitForm.date;
     const missingItems = visitItems.length === 0;
-    const missingAmount = String(visitForm.amountCollected || "").trim() === "";
+    const missingAmount = !isDegustation && String(visitForm.amountCollected || "").trim() === "";
     const invalidCountSaleType = visitEntryType === "count_only" && visitForm.saleType === "consignado";
     const missingRemainingIds = new Set(
-      visitItems
+      (isDegustation ? [] : visitItems)
         .filter((item) => item.remaining === null || item.remaining === undefined)
         .map((item) => item.id)
     );
     return {
       missingClient,
+      missingProspect,
       missingDate,
       missingItems,
       missingAmount,
@@ -730,7 +759,9 @@ export default function App() {
 
   function getVisitValidationError() {
     const state = getVisitValidationState();
-    if (state.missingClient || state.missingDate) return "Cliente y fecha son obligatorios.";
+    if (state.missingDate) return "Fecha obligatoria.";
+    if (state.missingClient) return "Cliente obligatorio para esta visita.";
+    if (state.missingProspect) return "En degustacion debes seleccionar cliente o indicar nombre del comercio prospecto.";
     if (state.missingItems) return visitEntryType === "count_only" ? "Debes agregar al menos un producto para conteo." : "Debes agregar al menos un producto despachado.";
     if (state.invalidCountSaleType) return "En visita solo conteo, el tipo de cobro debe ser A vista o Boleto.";
     if (state.missingAmount) return "Cantidad recibida es obligatoria (usa 0 si no cobraste).";
@@ -993,6 +1024,32 @@ export default function App() {
     } catch (e) { setError(e.message || "Error"); }
   }
 
+  async function addClientMovement() {
+    if (!selectedClient) return setError("Cliente no seleccionado.");
+    if (savingMovement) return;
+    if (!String(clientMovementForm.productName || "").trim()) return setError("Producto obligatorio en movimiento.");
+    if (num(clientMovementForm.quantity) <= 0) return setError("Cantidad debe ser mayor a 0.");
+
+    try {
+      setSavingMovement(true);
+      await apiPost(`/clients/${selectedClient.id}/movements`, {
+        date: clientMovementForm.date || today(),
+        type: clientMovementForm.type || "ajuste",
+        productId: clientMovementForm.productId || "",
+        productName: String(clientMovementForm.productName || "").trim(),
+        quantity: num(clientMovementForm.quantity),
+        notes: String(clientMovementForm.notes || "").trim()
+      });
+      setClientMovementForm({ date: today(), type: "ajuste", productId: "", productName: "", quantity: "", notes: "" });
+      await loadAll();
+      setToast("Movimiento registrado");
+    } catch (e) {
+      setError(e.message || "No se pudo registrar movimiento");
+    } finally {
+      setSavingMovement(false);
+    }
+  }
+
   async function addVisit() {
     const validationError = getVisitValidationError();
     if (validationError) {
@@ -1001,17 +1058,20 @@ export default function App() {
       return;
     }
     try {
-      const paymentType = visitForm.saleType === "a_vista" ? "contado" : "consignado";
+      const isDegustation = visitEntryType === "degustacion";
+      const saleType = isDegustation ? "degustacion" : visitForm.saleType;
+      const paymentType = isDegustation ? "degustacion" : (saleType === "a_vista" ? "contado" : "consignado");
       await apiPost("/visits", {
         ...visitForm,
         visitType: visitEntryType,
+        saleType,
         paymentType,
-        amountCollected: num(visitForm.amountCollected),
+        amountCollected: isDegustation ? 0 : num(visitForm.amountCollected),
         items: visitItems,
         delivered: visitEntryType === "count_only" ? 0 : visitTotals.totalQuantity,
         remaining: 0
       });
-      setVisitForm({ date: today(), clientId: "", amountCollected: "", collectionMethod: "efectivo", saleType: "consignado", boletoDays: 7, nextVisitDate: "", notes: "" });
+      setVisitForm({ date: today(), clientId: "", prospectTradeName: "", prospectBuyerName: "", prospectPhone: "", amountCollected: "", collectionMethod: "efectivo", saleType: "consignado", boletoDays: 7, nextVisitDate: "", notes: "" });
       setVisitItems([]);
       setVisitItemDraft({ productId: "", productQuery: "", quantity: "", unitPrice: "" });
       setVisitClientQuery("");
@@ -1050,7 +1110,7 @@ export default function App() {
     if (!selectedClient) return;
     const option = { id: selectedClient.id, internalId: selectedClient.internalId || "", name: selectedClient.tradeName || selectedClient.name || "Cliente", buyer: selectedClient.buyerName || selectedClient.contact || "" };
     setVisitEntryType("dispatch");
-    setVisitForm((p) => ({ ...p, saleType: "consignado", collectionMethod: "", boletoDays: 7 }));
+    setVisitForm((p) => ({ ...p, saleType: "consignado", collectionMethod: "", boletoDays: 7, prospectTradeName: "", prospectBuyerName: "", prospectPhone: "" }));
     setVisitForm((p) => ({ ...p, clientId: selectedClient.id, date: today() }));
     setVisitClientQuery(formatClientOption(option));
     setShowClientSuggestions(false);
@@ -1059,14 +1119,21 @@ export default function App() {
   }
   function openRegisterVisitFromVisits() {
     setVisitEntryType("dispatch");
-    setVisitForm((p) => ({ ...p, saleType: "consignado", collectionMethod: "", boletoDays: 7 }));
+    setVisitForm((p) => ({ ...p, saleType: "consignado", collectionMethod: "", boletoDays: 7, prospectTradeName: "", prospectBuyerName: "", prospectPhone: "" }));
     setShowVisitsActions(false);
     setShowClientSuggestions(true);
     setTab("nuevaVisita");
   }
   function openCountOnlyVisitFromVisits() {
     setVisitEntryType("count_only");
-    setVisitForm((p) => ({ ...p, saleType: "a_vista", collectionMethod: "efectivo", boletoDays: 7 }));
+    setVisitForm((p) => ({ ...p, saleType: "a_vista", collectionMethod: "efectivo", boletoDays: 7, prospectTradeName: "", prospectBuyerName: "", prospectPhone: "" }));
+    setShowVisitsActions(false);
+    setShowClientSuggestions(true);
+    setTab("nuevaVisita");
+  }
+  function openDegustationVisitFromVisits() {
+    setVisitEntryType("degustacion");
+    setVisitForm((p) => ({ ...p, saleType: "degustacion", collectionMethod: "", boletoDays: 0, amountCollected: "0", prospectTradeName: "", prospectBuyerName: "", prospectPhone: "" }));
     setShowVisitsActions(false);
     setShowClientSuggestions(true);
     setTab("nuevaVisita");
@@ -1164,6 +1231,38 @@ export default function App() {
       .sort((a, b) => b.debt - a.debt);
     return { debtByClient, debtByProduct };
   }, [data.clients, data.visits]);
+
+  const degustationSummary = useMemo(() => {
+    const prospectsById = new Map((data.prospects || []).map((p) => [String(p.id), p]));
+    const clientsById = new Map((data.clients || []).map((c) => [String(c.id), c]));
+    const degustations = (data.visits || [])
+      .filter((v) => String(v.visitType || "").toLowerCase() === "degustacion")
+      .sort((a, b) => new Date(b.date) - new Date(a.date));
+    const uniqueProspects = new Set(degustations.map((v) => String(v.prospectId || "").trim()).filter(Boolean));
+    let converted = 0;
+    for (const id of uniqueProspects) {
+      const prospect = prospectsById.get(id);
+      if (prospect?.convertedClientId) converted += 1;
+    }
+    const conversionRate = uniqueProspects.size > 0 ? (converted / uniqueProspects.size) * 100 : 0;
+    return {
+      totalDegustations: degustations.length,
+      uniqueProspects: uniqueProspects.size,
+      converted,
+      conversionRate,
+      latest: degustations.slice(0, 20).map((v) => {
+        const prospect = prospectsById.get(String(v.prospectId || ""));
+        const client = prospect?.convertedClientId ? clientsById.get(String(prospect.convertedClientId)) : null;
+        return {
+          id: v.id,
+          date: v.date,
+          prospectName: v.prospectTradeName || prospect?.tradeName || (client ? (client.tradeName || client.name) : "Prospecto"),
+          status: client ? "Convertido" : "Pendiente",
+          convertedClientName: client ? (client.tradeName || client.name || "") : ""
+        };
+      })
+    };
+  }, [data.visits, data.prospects, data.clients]);
 
   return (
     <SafeAreaProvider>
@@ -1263,7 +1362,7 @@ export default function App() {
             const computed = Array.isArray(c.productAvailability) && c.productAvailability.length > 0 ? c.productAvailability : computeAvailabilityFromVisits(data.visits, c.id);
             const availabilityPreview = computed.slice(0, 2);
             return (
-              <Pressable key={c.id} style={styles.card} onPress={() => { setSelectedClientId(c.id); setShowClientSalesList(false); setSelectedClientSaleVisitId(""); setShowClientAccount(false); }}>
+              <Pressable key={c.id} style={styles.card} onPress={() => { setSelectedClientId(c.id); setShowClientSalesList(false); setSelectedClientSaleVisitId(""); setShowClientAccount(false); setClientMovementForm({ date: today(), type: "ajuste", productId: "", productName: "", quantity: "", notes: "" }); }}>
                 <Text style={styles.t}>{c.tradeName || c.name}</Text>
                 <Text style={styles.s}>ID interno: {c.internalId || "-"}</Text>
                 <Text style={styles.s}>{c.type} | {c.location || "Sin ubicacion"}</Text>
@@ -1281,7 +1380,7 @@ export default function App() {
         </>}
 
         {!loading && tab === "clientes" && !!selectedClientId && selectedClient && <>
-          <View style={styles.card}><Pressable style={styles.copy} onPress={() => { setSelectedClientId(""); setSelectedClientSaleVisitId(""); setShowClientSalesList(false); setShowClientAccount(false); setShowActions(false); setShowSchedule(false); }}><Text style={styles.copyT}>Volver</Text></Pressable><Text style={styles.h2}>{selectedClient.tradeName || selectedClient.name}</Text></View>
+          <View style={styles.card}><Pressable style={styles.copy} onPress={() => { setSelectedClientId(""); setSelectedClientSaleVisitId(""); setShowClientSalesList(false); setShowClientAccount(false); setShowActions(false); setShowSchedule(false); setClientMovementForm({ date: today(), type: "ajuste", productId: "", productName: "", quantity: "", notes: "" }); }}><Text style={styles.copyT}>Volver</Text></Pressable><Text style={styles.h2}>{selectedClient.tradeName || selectedClient.name}</Text></View>
           <View style={styles.card}><Text style={styles.t}>1. Informacion del cliente</Text>
             <Field label="ID interno" value={selectedClient.internalId} /><Field label="Responsable" value={selectedClient.buyerName || selectedClient.contact} /><Field label="Telefono" value={selectedClient.phone} /><Field label="Correo" value={selectedClient.email} /><Field label="CPF" value={selectedClient.cpf} /><Field label="CNPJ" value={selectedClient.cnpj} /><Field label="IE" value={selectedClient.ie} /><Field label="CEP" value={selectedClient.cep} /><Field label="Direccion" value={selectedClient.location} /><Field label="Tipo" value={selectedClient.type} /><Field label="Atendido por" value={selectedClient.managedByName} /><Field label="Observaciones" value={selectedClient.observations} />
             <Text style={styles.tSection}>Disponibilidad actual (cliente)</Text>
@@ -1295,6 +1394,72 @@ export default function App() {
               </View>
             ))}
             {selectedClientAvailability.length === 0 ? <Text style={styles.s}>Sin datos de conteo/estimado por producto.</Text> : null}
+          </View>
+          <View style={styles.card}>
+            <Text style={styles.t}>Cambios del cliente (vencido, danado, devolucion, ajuste)</Text>
+            <Pressable style={styles.i} onPress={() => setShowMovementDatePicker(true)}>
+              <Text style={styles.datePickerText}>{clientMovementForm.date ? `Fecha: ${clientMovementForm.date}` : "Seleccionar fecha"}</Text>
+            </Pressable>
+            {showMovementDatePicker && (
+              <DateTimePicker
+                value={clientMovementForm.date ? new Date(`${clientMovementForm.date}T00:00:00`) : new Date()}
+                mode="date"
+                display="default"
+                onChange={onChangeMovementDate}
+              />
+            )}
+            <Text style={styles.s}>Tipo de cambio</Text>
+            <View style={styles.tabs}>
+              {[["vencido", "Vencido"], ["danado", "Danado"], ["devolucion", "Devolucion"], ["ajuste", "Ajuste"], ["otro", "Otro"]].map(([id, label]) => (
+                <Pressable key={id} style={[styles.tab, clientMovementForm.type === id && styles.tabA]} onPress={() => setClientMovementForm((p) => ({ ...p, type: id }))}>
+                  <Text style={[styles.tabT, clientMovementForm.type === id && styles.tabTA]}>{label}</Text>
+                </Pressable>
+              ))}
+            </View>
+            <TextInput
+              style={styles.i}
+              placeholder="Producto"
+              value={clientMovementForm.productName}
+              onChangeText={(t) => setClientMovementForm((p) => ({ ...p, productName: t, productId: "" }))}
+            />
+            <View style={styles.quick}>
+              {(data.products || []).slice(0, 10).map((p) => (
+                <Pressable
+                  key={`mov_prod_${p.id}`}
+                  style={styles.quickBtn}
+                  onPress={() => setClientMovementForm((d) => ({ ...d, productId: p.id, productName: p.name }))}
+                >
+                  <Text style={styles.quickTxt}>{p.name}</Text>
+                </Pressable>
+              ))}
+            </View>
+            <TextInput
+              style={styles.i}
+              placeholder="Cantidad (unid)"
+              keyboardType="decimal-pad"
+              value={clientMovementForm.quantity}
+              onChangeText={(t) => setClientMovementForm((p) => ({ ...p, quantity: t }))}
+            />
+            <TextInput
+              style={styles.i}
+              placeholder="Motivo / nota"
+              value={clientMovementForm.notes}
+              onChangeText={(t) => setClientMovementForm((p) => ({ ...p, notes: t }))}
+            />
+            <Pressable style={[styles.btn, savingMovement && styles.btnDisabled]} onPress={addClientMovement} disabled={savingMovement}>
+              <Text style={styles.btnT}>{savingMovement ? "Guardando..." : "Registrar cambio"}</Text>
+            </Pressable>
+            <Text style={styles.tSection}>Historial de cambios</Text>
+            {selectedClientMovements.slice(0, 30).map((movement) => (
+              <View key={movement.id} style={styles.itemLine}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.dropdownTitle}>{movement.date} | {String(movement.type || "").toUpperCase()}</Text>
+                  <Text style={styles.dropdownSub}>{movement.productName} - {num(movement.quantity).toFixed(2)} unid</Text>
+                  {movement.notes ? <Text style={styles.dropdownSub}>{movement.notes}</Text> : null}
+                </View>
+              </View>
+            ))}
+            {selectedClientMovements.length === 0 ? <Text style={styles.s}>Sin cambios registrados para este cliente.</Text> : null}
           </View>
           <Pressable style={styles.card} onPress={openVisitsReport}>
             <Text style={styles.t}>2. Relatorio de visitas</Text>
@@ -1451,6 +1616,7 @@ export default function App() {
               <Text style={styles.t}>{v.clientName}</Text>
               <Text style={styles.s}>Responsable: {v.clientBuyer || "-"}</Text>
               <Text style={styles.s}>ID interno: {v.clientInternalId || "-"}</Text>
+              <Text style={styles.s}>Registrado por: {v.sellerName || "Admin"}</Text>
               <Text style={styles.s}>{v.date} | {v.paymentType}</Text>
               <Text style={styles.s}>Proxima visita: {v.nextVisitDate || nextAppointmentByClient.get(v.clientId)?.date || "-"}</Text>
               <Text style={styles.s}>Unidades {num(v.soldUnits ?? v.delivered).toFixed(2)} | Valor {num(v.totalValue ?? v.soldAmount).toFixed(2)}</Text>
@@ -1465,8 +1631,10 @@ export default function App() {
             <View style={styles.card}>
               <Pressable style={styles.copy} onPress={() => setSelectedVisitId("")}><Text style={styles.copyT}>Volver a visitas</Text></Pressable>
               <Text style={styles.h2}>Detalle de visita</Text>
-              <Text style={styles.s}>Cliente: {selectedVisitClient?.tradeName || selectedVisitClient?.name || "Cliente"}</Text>
+              <Text style={styles.s}>Cliente: {selectedVisitClient?.tradeName || selectedVisitClient?.name || selectedVisit.prospectTradeName || "Prospecto"}</Text>
+              {!selectedVisitClient && selectedVisit.prospectBuyerName ? <Text style={styles.s}>Responsable prospecto: {selectedVisit.prospectBuyerName}</Text> : null}
               <Text style={styles.s}>Fecha: {selectedVisit.date}</Text>
+              <Text style={styles.s}>Registrado por: {selectedVisit.createdBySellerName || (selectedVisit.createdBySellerId ? "Vendedor" : "Admin")}</Text>
               <Text style={styles.s}>Tipo venta: {selectedVisit.saleType || selectedVisit.paymentType}</Text>
               {selectedVisit.saleType === "boleto" ? <Text style={styles.s}>Boleto: {selectedVisit.boletoDays || "-"} dias | Vence: {selectedVisit.dueDate || "-"}</Text> : null}
               <Text style={styles.s}>Cobrado: {num(selectedVisit.amountCollected).toFixed(2)}</Text>
@@ -1813,6 +1981,7 @@ export default function App() {
                 <Pressable style={[styles.tab, reportFilters.saleType === "consignado" && styles.tabA]} onPress={() => setReportFilters((p) => ({ ...p, saleType: "consignado" }))}><Text style={[styles.tabT, reportFilters.saleType === "consignado" && styles.tabTA]}>Consignado</Text></Pressable>
                 <Pressable style={[styles.tab, reportFilters.saleType === "a_vista" && styles.tabA]} onPress={() => setReportFilters((p) => ({ ...p, saleType: "a_vista" }))}><Text style={[styles.tabT, reportFilters.saleType === "a_vista" && styles.tabTA]}>A vista</Text></Pressable>
                 <Pressable style={[styles.tab, reportFilters.saleType === "boleto" && styles.tabA]} onPress={() => setReportFilters((p) => ({ ...p, saleType: "boleto" }))}><Text style={[styles.tabT, reportFilters.saleType === "boleto" && styles.tabTA]}>Boleto</Text></Pressable>
+                <Pressable style={[styles.tab, reportFilters.saleType === "degustacion" && styles.tabA]} onPress={() => setReportFilters((p) => ({ ...p, saleType: "degustacion" }))}><Text style={[styles.tabT, reportFilters.saleType === "degustacion" && styles.tabTA]}>Degustacion</Text></Pressable>
               </View>
 
               <View style={styles.quick}>
@@ -1831,6 +2000,24 @@ export default function App() {
               <View style={[styles.box, { backgroundColor: "#dff4ef" }]}><Text>Cobrado</Text><Text style={styles.big}>{reportSummary.totalCollected.toFixed(2)}</Text></View>
               <View style={[styles.box, { backgroundColor: "#ffe5d9" }]}><Text>Pendiente</Text><Text style={styles.big}>{reportSummary.pendingTotal.toFixed(2)}</Text></View>
               <View style={[styles.box, { backgroundColor: "#f9e2e2" }]}><Text>Vencido</Text><Text style={styles.big}>{reportSummary.overdueTotal.toFixed(2)}</Text></View>
+            </View>
+
+            <View style={styles.card}>
+              <Text style={styles.t}>Degustaciones y conversion</Text>
+              <Text style={styles.s}>Degustaciones: {degustationSummary.totalDegustations}</Text>
+              <Text style={styles.s}>Prospectos degustados: {degustationSummary.uniqueProspects}</Text>
+              <Text style={styles.s}>Prospectos convertidos: {degustationSummary.converted}</Text>
+              <Text style={styles.s}>Tasa de conversion: {degustationSummary.conversionRate.toFixed(1)}%</Text>
+              {degustationSummary.latest.map((item) => (
+                <View key={item.id} style={styles.itemLine}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.dropdownTitle}>{item.prospectName}</Text>
+                    <Text style={styles.dropdownSub}>{item.date} | {item.status}</Text>
+                    {item.convertedClientName ? <Text style={styles.dropdownSub}>Cliente convertido: {item.convertedClientName}</Text> : null}
+                  </View>
+                </View>
+              ))}
+              {degustationSummary.latest.length === 0 ? <Text style={styles.s}>Sin degustaciones registradas.</Text> : null}
             </View>
 
             <View style={styles.card}>
@@ -1908,7 +2095,7 @@ export default function App() {
             <View style={[styles.selectorShell, visitValidation.missingClient && styles.inputError]}>
               <TextInput
                 style={styles.selectorInput}
-                placeholder="Buscar cliente"
+                placeholder={visitEntryType === "degustacion" ? "Buscar cliente (opcional en degustacion)" : "Buscar cliente"}
                 placeholderTextColor="#9aa0ad"
                 value={visitClientQuery}
                 onChangeText={(t) => {
@@ -1942,9 +2129,18 @@ export default function App() {
               </View>
             )}
           </>
+          {visitEntryType === "degustacion" && (
+            <>
+              <Text style={styles.tSection}>Prospecto (si no es cliente)</Text>
+              <TextInput style={[styles.i, visitValidation.missingProspect && styles.inputError]} placeholder="Nombre comercio prospecto" value={visitForm.prospectTradeName} onChangeText={(t) => setVisitForm((p) => ({ ...p, prospectTradeName: t }))} />
+              <TextInput style={styles.i} placeholder="Responsable prospecto" value={visitForm.prospectBuyerName} onChangeText={(t) => setVisitForm((p) => ({ ...p, prospectBuyerName: t }))} />
+              <TextInput style={styles.i} placeholder="Telefono prospecto" value={visitForm.prospectPhone} onChangeText={(t) => setVisitForm((p) => ({ ...p, prospectPhone: t }))} />
+            </>
+          )}
 
-          <Text style={styles.tSection}>{visitEntryType === "count_only" ? "Conteo de mercancia disponible" : "Mercancia despachada"}</Text>
+          <Text style={styles.tSection}>{visitEntryType === "count_only" ? "Conteo de mercancia disponible" : visitEntryType === "degustacion" ? "Degustacion entregada" : "Mercancia despachada"}</Text>
           {visitEntryType === "count_only" ? <Text style={styles.s}>Modo conteo: no descuenta stock, solo registra disponibilidad actual del cliente.</Text> : null}
+          {visitEntryType === "degustacion" ? <Text style={styles.s}>Degustacion: descuenta inventario, no genera deuda ni cobro.</Text> : null}
           <View style={styles.selectorShell}>
             <TextInput
               style={styles.selectorInput}
@@ -1974,11 +2170,14 @@ export default function App() {
               {filteredVisitProductOptions.length === 0 ? <Text style={styles.s}>Sin productos.</Text> : null}
             </View>
           )}
-          {visitEntryType !== "count_only" && (
+          {visitEntryType === "dispatch" && (
             <>
               <TextInput style={styles.i} placeholder="Valor del producto" value={visitItemDraft.unitPrice} onChangeText={(t) => setVisitItemDraft((p) => ({ ...p, unitPrice: t }))} />
               <TextInput style={styles.i} placeholder="Cantidad del producto" value={visitItemDraft.quantity} onChangeText={(t) => setVisitItemDraft((p) => ({ ...p, quantity: t }))} keyboardType="decimal-pad" />
             </>
+          )}
+          {visitEntryType === "degustacion" && (
+            <TextInput style={styles.i} placeholder="Cantidad para degustacion" value={visitItemDraft.quantity} onChangeText={(t) => setVisitItemDraft((p) => ({ ...p, quantity: t }))} keyboardType="decimal-pad" />
           )}
           <Pressable style={styles.copy} onPress={addVisitItem}><Text style={styles.copyT}>Agregar producto</Text></Pressable>
 
@@ -1986,19 +2185,22 @@ export default function App() {
             <View key={item.id} style={styles.itemLine}>
               <View style={{ flex: 1 }}>
                 <Text style={styles.dropdownTitle}>{item.productName}</Text>
-                <Text style={styles.dropdownSub}>{visitEntryType === "count_only" ? `Disponible: ${num(item.remaining).toFixed(2)} unid` : `Cant: ${item.quantity} | Valor: ${num(item.unitPrice).toFixed(2)} | Total: ${num(item.total).toFixed(2)}`}</Text>
+                <Text style={styles.dropdownSub}>{visitEntryType === "count_only" ? `Disponible: ${num(item.remaining).toFixed(2)} unid` : visitEntryType === "degustacion" ? `Degustacion: ${num(item.quantity).toFixed(2)} unid` : `Cant: ${item.quantity} | Valor: ${num(item.unitPrice).toFixed(2)} | Total: ${num(item.total).toFixed(2)}`}</Text>
               </View>
               <Pressable style={styles.selectorBtn} onPress={() => removeVisitItem(item.id)}><Text style={styles.selectorBtnTxt}>X</Text></Pressable>
             </View>
           ))}
           {visitValidation.missingItems ? <Text style={styles.warnHint}>{visitEntryType === "count_only" ? "Agrega al menos 1 producto para conteo." : "Agrega al menos 1 producto despachado."}</Text> : null}
-          {visitEntryType !== "count_only" && (
+          {visitEntryType === "dispatch" && (
             <>
               <Text style={styles.s}>Total productos: {visitTotals.totalQuantity}</Text>
               <Text style={styles.s}>Total despacho: {visitTotals.totalValue.toFixed(2)}</Text>
             </>
           )}
+          {visitEntryType === "degustacion" && <Text style={styles.s}>Total degustado: {visitTotals.totalQuantity.toFixed(2)} unid</Text>}
 
+          {visitEntryType !== "degustacion" ? (
+            <>
           <Text style={styles.tSection}>Tipo de venta</Text>
           <View style={styles.tabs}>
             {visitEntryType !== "count_only" ? (
@@ -2047,6 +2249,13 @@ export default function App() {
             </Text>
           ))}
           {visitItems.length === 0 ? <Text style={styles.s}>Agrega productos para calcular sugerencias.</Text> : null}
+            </>
+          ) : (
+            <>
+              <Text style={styles.tSection}>Tipo de visita</Text>
+              <Text style={styles.s}>Degustacion (sin datos de cobro y sin sugerencia).</Text>
+            </>
+          )}
 
           <Text style={styles.tSection}>Proxima visita</Text>
           <Text style={styles.s}>Sugerida: {sales?.next ? sales.next : "Sin historico"}</Text>
@@ -2077,7 +2286,7 @@ export default function App() {
       </>}
 
       {!loading && tab === "visitas" && !selectedVisitId && <>
-        {showVisitsActions && <View style={styles.menu}><Pressable style={styles.menuI} onPress={openRegisterVisitFromVisits}><Text style={styles.menuT}>Visita con despacho</Text></Pressable><Pressable style={styles.menuI} onPress={openCountOnlyVisitFromVisits}><Text style={styles.menuT}>Visita solo conteo</Text></Pressable><Pressable style={styles.menuI} onPress={() => { setShowVisitsActions(false); setShowVisitScheduleClientSuggestions(false); setShowVisitScheduleForm((p) => !p); }}><Text style={styles.menuT}>Agendar visita</Text></Pressable></View>}
+        {showVisitsActions && <View style={styles.menu}><Pressable style={styles.menuI} onPress={openRegisterVisitFromVisits}><Text style={styles.menuT}>Visita con despacho</Text></Pressable><Pressable style={styles.menuI} onPress={openCountOnlyVisitFromVisits}><Text style={styles.menuT}>Visita solo conteo</Text></Pressable><Pressable style={styles.menuI} onPress={openDegustationVisitFromVisits}><Text style={styles.menuT}>Registrar degustacion</Text></Pressable><Pressable style={styles.menuI} onPress={() => { setShowVisitsActions(false); setShowVisitScheduleClientSuggestions(false); setShowVisitScheduleForm((p) => !p); }}><Text style={styles.menuT}>Agendar visita</Text></Pressable></View>}
         <Pressable style={styles.fab} onPress={() => setShowVisitsActions((p) => !p)}><Text style={styles.fabT}>{showVisitsActions ? "x" : "+"}</Text></Pressable>
       </>}
 

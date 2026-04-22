@@ -72,7 +72,7 @@ async function apiDelete(path) {
 
 export default function App() {
   const [tab, setTab] = React.useState("dashboard");
-  const [data, setData] = React.useState({ clients: [], visits: [], products: [], inventory: [], sellers: [], sellerOverview: [], dashboard: { totalSoldThisWeek: 0, totalDebt: 0, clientsNeedingVisit: [], topClients: [] } });
+  const [data, setData] = React.useState({ clients: [], prospects: [], visits: [], products: [], inventory: [], sellers: [], sellerOverview: [], dashboard: { totalSoldThisWeek: 0, totalDebt: 0, clientsNeedingVisit: [], topClients: [] } });
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState("");
   const [ok, setOk] = React.useState("");
@@ -88,7 +88,7 @@ export default function App() {
   const [clientEditForm, setClientEditForm] = React.useState(null);
 
   const [clientForm, setClientForm] = React.useState(CLIENT_FORM_INITIAL);
-  const [visitForm, setVisitForm] = React.useState({ date: new Date().toISOString().slice(0, 10), clientId: "", saleType: "consignado", amountCollected: "0", nextVisitDate: "", notes: "", productId: "", quantity: "", unitPrice: "", remaining: "" });
+  const [visitForm, setVisitForm] = React.useState({ date: new Date().toISOString().slice(0, 10), visitType: "dispatch", clientId: "", prospectTradeName: "", prospectBuyerName: "", prospectPhone: "", saleType: "consignado", amountCollected: "0", nextVisitDate: "", notes: "", productId: "", quantity: "", unitPrice: "", remaining: "" });
   const [productForm, setProductForm] = React.useState({ name: "", unitPrice: "" });
   const [inventoryForm, setInventoryForm] = React.useState({ productId: "", quantity: "" });
   const [inventoryDraft, setInventoryDraft] = React.useState({});
@@ -99,7 +99,10 @@ export default function App() {
     try {
       setLoading(true); setError("");
       const payload = await apiGet("/data");
-      setData(payload);
+      setData({
+        ...payload,
+        prospects: Array.isArray(payload?.prospects) ? payload.prospects : []
+      });
     } catch (e) { setError(e.message || "No se pudo cargar"); }
     finally { setLoading(false); }
   }
@@ -175,6 +178,38 @@ export default function App() {
         .sort((a, b) => b.debt - a.debt)
     };
   }, [data.clients, data.visits]);
+
+  const degustationSummary = React.useMemo(() => {
+    const prospectsById = new Map((data.prospects || []).map((p) => [String(p.id), p]));
+    const clientsById = new Map((data.clients || []).map((c) => [String(c.id), c]));
+    const degustations = (data.visits || [])
+      .filter((v) => String(v.visitType || "").toLowerCase() === "degustacion")
+      .sort((a, b) => new Date(b.date) - new Date(a.date));
+    const uniqueProspects = new Set(degustations.map((v) => String(v.prospectId || "").trim()).filter(Boolean));
+    let converted = 0;
+    for (const id of uniqueProspects) {
+      const prospect = prospectsById.get(id);
+      if (prospect?.convertedClientId) converted += 1;
+    }
+    const conversionRate = uniqueProspects.size > 0 ? (converted / uniqueProspects.size) * 100 : 0;
+    return {
+      totalDegustations: degustations.length,
+      uniqueProspects: uniqueProspects.size,
+      converted,
+      conversionRate,
+      latest: degustations.slice(0, 20).map((v) => {
+        const prospect = prospectsById.get(String(v.prospectId || ""));
+        const client = prospect?.convertedClientId ? clientsById.get(String(prospect.convertedClientId)) : null;
+        return {
+          id: v.id,
+          date: v.date,
+          prospectName: v.prospectTradeName || prospect?.tradeName || (client ? (client.tradeName || client.name) : "Prospecto"),
+          status: client ? "Convertido" : "Pendiente",
+          convertedClientName: client ? (client.tradeName || client.name || "") : ""
+        };
+      })
+    };
+  }, [data.visits, data.prospects, data.clients]);
 
   function openClientModal() {
     setClientForm({ ...CLIENT_FORM_INITIAL });
@@ -312,25 +347,36 @@ export default function App() {
   async function saveVisit(e) {
     e.preventDefault();
     const product = data.products.find((p) => p.id === visitForm.productId);
-    if (!visitForm.clientId || !product) return setError("Cliente y producto obligatorios");
-    if (String(visitForm.remaining).trim() === "") return setError("Restante obligatorio");
+    const isCountOnly = String(visitForm.visitType || "dispatch") === "count_only";
+    const isDegustation = String(visitForm.visitType || "dispatch") === "degustacion";
+    if (!product) return setError("Producto obligatorio");
+    if (!isDegustation && !visitForm.clientId) return setError("Cliente obligatorio");
+    if (isDegustation && !visitForm.clientId && !String(visitForm.prospectTradeName || "").trim()) return setError("En degustacion, selecciona cliente o indica nombre del comercio prospecto.");
+    if (!isDegustation && String(visitForm.remaining).trim() === "") return setError("Restante obligatorio");
     const qty = num(visitForm.quantity);
     if (qty <= 0) return setError("Cantidad debe ser mayor a 0");
-    const price = num(visitForm.unitPrice || product.unitPrice);
+    const price = isDegustation ? 0 : num(visitForm.unitPrice || product.unitPrice);
+    const saleType = isDegustation ? "degustacion" : visitForm.saleType;
+    const amountCollected = isDegustation ? 0 : num(visitForm.amountCollected);
+    const paymentType = isDegustation ? "degustacion" : (saleType === "a_vista" ? "contado" : "consignado");
     try {
       await apiPost("/visits", {
+        visitType: visitForm.visitType,
         clientId: visitForm.clientId,
+        prospectTradeName: String(visitForm.prospectTradeName || "").trim(),
+        prospectBuyerName: String(visitForm.prospectBuyerName || "").trim(),
+        prospectPhone: String(visitForm.prospectPhone || "").trim(),
         date: visitForm.date,
-        saleType: visitForm.saleType,
-        amountCollected: num(visitForm.amountCollected),
+        saleType,
+        amountCollected,
         nextVisitDate: visitForm.nextVisitDate,
         notes: visitForm.notes,
-        paymentType: visitForm.saleType === "a_vista" ? "contado" : "consignado",
-        items: [{ productId: product.id, productName: product.name, quantity: qty, unitPrice: price, total: qty * price, remaining: num(visitForm.remaining) }],
+        paymentType,
+        items: [{ productId: product.id, productName: product.name, quantity: qty, unitPrice: price, total: qty * price, remaining: isDegustation ? null : num(visitForm.remaining) }],
         delivered: qty,
         remaining: 0
       });
-      setVisitForm({ date: new Date().toISOString().slice(0, 10), clientId: "", saleType: "consignado", amountCollected: "0", nextVisitDate: "", notes: "", productId: "", quantity: "", unitPrice: "", remaining: "" });
+      setVisitForm({ date: new Date().toISOString().slice(0, 10), visitType: "dispatch", clientId: "", prospectTradeName: "", prospectBuyerName: "", prospectPhone: "", saleType: "consignado", amountCollected: "0", nextVisitDate: "", notes: "", productId: "", quantity: "", unitPrice: "", remaining: "" });
       setOk("Visita guardada");
       await loadAll();
       setTab("visits");
@@ -433,9 +479,9 @@ export default function App() {
 
       {!loading && tab === "dashboard" && <section className="stack"><div className="cards-grid"><article className="stat-card warm"><div className="dashHead"><span>Vendido esta semana</span><button className="linkBtn" type="button" onClick={() => setShowWeekDetails((p) => !p)}>{showWeekDetails ? "Ocultar" : "Ver detalle"}</button></div><strong>{money(weekSummary.totalValue)}</strong><small>A vista: {money(weekSummary.totalVista)} | Consignado: {money(weekSummary.totalConsignado)}</small>{showWeekDetails ? <div className="dashDetail">{weekSummary.products.length === 0 ? <p className="preview">Sin ventas esta semana.</p> : weekSummary.products.map((item) => <div className="dashRow" key={`week_${item.productName}`}><span>{item.productName}</span><strong>{num(item.qty).toFixed(2)} unid | {money(item.value)}</strong></div>)}</div> : null}</article><article className="stat-card cool"><div className="dashHead"><span>Deuda total</span><button className="linkBtn" type="button" onClick={() => setShowDebtDetails((p) => !p)}>{showDebtDetails ? "Ocultar" : "Ver detalle"}</button></div><strong>{money(data.dashboard.totalDebt)}</strong><small>Clientes con deuda: {debtSummary.debtByClient.length}</small>{showDebtDetails ? <div className="dashDetail"><p className="preview"><strong>Deuda por producto</strong></p>{debtSummary.debtByProduct.length === 0 ? <p className="preview">Sin deuda por producto.</p> : debtSummary.debtByProduct.map((row) => <div className="dashRow" key={`debt_prod_${row.productName}`}><span>{row.productName}</span><strong>{money(row.debt)}</strong></div>)}<p className="preview"><strong>Deuda por cliente</strong></p>{debtSummary.debtByClient.length === 0 ? <p className="preview">Sin deuda por cliente.</p> : debtSummary.debtByClient.map((row) => <div className="dashRow" key={`debt_client_${row.clientId}`}><span>{row.clientName}</span><strong>{money(row.debt)}</strong></div>)}</div> : null}</article><article className="stat-card mint"><span>Clientes por visitar</span><strong>{(data.dashboard.clientsNeedingVisit || []).length}</strong></article></div><article className="panel"><h3>Clientes con mayores ventas</h3><ul className="simple-list">{(data.dashboard.topClients || []).map((c) => <li key={c.id}><span>{c.name}</span><strong>{num(c.totalSold).toFixed(2)} unid</strong></li>)}</ul></article></section>}
 
-      {!loading && tab === "clients" && <section className="panel"><h3>Clientes</h3><ul className="simple-list">{(data.clients || []).map((c) => <li key={c.id}><div><span>{c.tradeName || c.name}</span><small>{c.type || "-"} | {c.location || "Sin ubicacion"}</small><small>Responsable: {c.buyerName || c.contact || "-"}</small><small>CPF/CNPJ: {c.cpf || "-"} / {c.cnpj || "-"}</small>{clientEditId === c.id && clientEditForm ? <form className="form inlineForm" onSubmit={saveClientEdit}><label>Nombre comercio<input required value={clientEditForm.tradeName} onChange={(e) => setClientEditForm((d) => ({ ...(d || {}), tradeName: e.target.value }))} /></label><label>Responsable<input value={clientEditForm.buyerName} onChange={(e) => setClientEditForm((d) => ({ ...(d || {}), buyerName: e.target.value }))} /></label><label>Ubicacion<input value={clientEditForm.location} onChange={(e) => setClientEditForm((d) => ({ ...(d || {}), location: e.target.value }))} /></label><label>Tipo<input value={clientEditForm.type} onChange={(e) => setClientEditForm((d) => ({ ...(d || {}), type: e.target.value }))} /></label><label>Telefono<input value={clientEditForm.phone} onChange={(e) => setClientEditForm((d) => ({ ...(d || {}), phone: e.target.value }))} /></label><label>Email<input value={clientEditForm.email} onChange={(e) => setClientEditForm((d) => ({ ...(d || {}), email: e.target.value }))} /></label><label>CPF<input value={clientEditForm.cpf || ""} onChange={(e) => setClientEditForm((d) => ({ ...(d || {}), cpf: e.target.value }))} /></label><label>CNPJ<input value={clientEditForm.cnpj || ""} onChange={(e) => setClientEditForm((d) => ({ ...(d || {}), cnpj: e.target.value }))} /></label><div className="miniActions"><button className="secondary btnMini" type="submit">Guardar cambios</button><button className="btnMini" type="button" onClick={cancelEditClient}>Cancelar</button></div></form> : null}</div><div className="rightCol"><strong>{money(c.debt)}</strong><div className="miniActions"><button className="secondary btnMini" type="button" onClick={() => beginEditClient(c)}>Editar</button><button className="danger btnMini" type="button" onClick={() => removeClient(c)}>Eliminar</button></div></div></li>)}</ul></section>}
+      {!loading && tab === "clients" && <section className="panel"><h3>Clientes</h3><ul className="simple-list">{(data.clients || []).map((c) => <li key={c.id}><div><span>{c.tradeName || c.name}</span><small>{c.type || "-"} | {c.location || "Sin ubicacion"}</small><small>Responsable: {c.buyerName || c.contact || "-"}</small><small>Atendido por: {c.managedByName || "Propietario"}</small><small>CPF/CNPJ: {c.cpf || "-"} / {c.cnpj || "-"}</small>{clientEditId === c.id && clientEditForm ? <form className="form inlineForm" onSubmit={saveClientEdit}><label>Nombre comercio<input required value={clientEditForm.tradeName} onChange={(e) => setClientEditForm((d) => ({ ...(d || {}), tradeName: e.target.value }))} /></label><label>Responsable<input value={clientEditForm.buyerName} onChange={(e) => setClientEditForm((d) => ({ ...(d || {}), buyerName: e.target.value }))} /></label><label>Ubicacion<input value={clientEditForm.location} onChange={(e) => setClientEditForm((d) => ({ ...(d || {}), location: e.target.value }))} /></label><label>Tipo<input value={clientEditForm.type} onChange={(e) => setClientEditForm((d) => ({ ...(d || {}), type: e.target.value }))} /></label><label>Telefono<input value={clientEditForm.phone} onChange={(e) => setClientEditForm((d) => ({ ...(d || {}), phone: e.target.value }))} /></label><label>Email<input value={clientEditForm.email} onChange={(e) => setClientEditForm((d) => ({ ...(d || {}), email: e.target.value }))} /></label><label>CPF<input value={clientEditForm.cpf || ""} onChange={(e) => setClientEditForm((d) => ({ ...(d || {}), cpf: e.target.value }))} /></label><label>CNPJ<input value={clientEditForm.cnpj || ""} onChange={(e) => setClientEditForm((d) => ({ ...(d || {}), cnpj: e.target.value }))} /></label><div className="miniActions"><button className="secondary btnMini" type="submit">Guardar cambios</button><button className="btnMini" type="button" onClick={cancelEditClient}>Cancelar</button></div></form> : null}</div><div className="rightCol"><strong>{money(c.debt)}</strong><div className="miniActions"><button className="secondary btnMini" type="button" onClick={() => beginEditClient(c)}>Editar</button><button className="danger btnMini" type="button" onClick={() => removeClient(c)}>Eliminar</button></div></div></li>)}</ul></section>}
 
-      {!loading && tab === "visits" && <section className="panel"><h3>Visitas</h3><ul className="simple-list">{[...(data.visits || [])].sort((a, b) => new Date(b.date) - new Date(a.date)).map((v) => { const c = data.clients.find((x) => x.id === v.clientId); const saleType = String(v.saleType || v.paymentType || "").toLowerCase(); const visitTotal = num(v.totalValue ?? v.soldAmount); const pending = Math.max(0, visitTotal - num(v.amountCollected)); const canMarkPaid = (saleType === "boleto" || saleType === "consignado") && pending > 0; const visitRow = { ...v, clientName: c?.tradeName || c?.name || "Cliente" }; return <li key={v.id}><div><span>{c?.tradeName || c?.name || "Cliente"}</span><small>{date(v.date)} | {v.saleType || v.paymentType}</small><small>Total: {money(v.totalValue ?? v.soldAmount)} | Cobrado: {money(v.amountCollected)}</small></div><div className="rightCol"><div className="miniActions">{canMarkPaid ? <button className="secondary btnMini" type="button" onClick={() => markPaid(v.id)}>Marcar pagado</button> : null}<button className="danger btnMini" type="button" onClick={() => removeVisit(visitRow)}>Eliminar</button></div><strong>{money(v.amountCollected)}</strong></div></li>; })}</ul></section>}
+      {!loading && tab === "visits" && <section className="panel"><h3>Visitas</h3><ul className="simple-list">{[...(data.visits || [])].sort((a, b) => new Date(b.date) - new Date(a.date)).map((v) => { const c = data.clients.find((x) => x.id === v.clientId); const s = data.sellers.find((x) => x.id === v.createdBySellerId); const saleType = String(v.saleType || v.paymentType || "").toLowerCase(); const visitTotal = num(v.totalValue ?? v.soldAmount); const pending = Math.max(0, visitTotal - num(v.amountCollected)); const canMarkPaid = (saleType === "boleto" || saleType === "consignado") && pending > 0; const visitName = c?.tradeName || c?.name || v.prospectTradeName || "Prospecto"; const visitRow = { ...v, clientName: visitName }; return <li key={v.id}><div><span>{visitName}</span><small>{date(v.date)} | {v.visitType || "dispatch"} | {v.saleType || v.paymentType}</small>{v.prospectTradeName && !v.clientId ? <small>Prospecto: {v.prospectTradeName}{v.prospectBuyerName ? ` | Resp: ${v.prospectBuyerName}` : ""}</small> : null}<small>Registrado por: {v.createdBySellerName || (v.createdBySellerId ? (s?.name || "Vendedor") : "Admin")}</small><small>Total: {money(v.totalValue ?? v.soldAmount)} | Cobrado: {money(v.amountCollected)}</small></div><div className="rightCol"><div className="miniActions">{canMarkPaid ? <button className="secondary btnMini" type="button" onClick={() => markPaid(v.id)}>Marcar pagado</button> : null}<button className="danger btnMini" type="button" onClick={() => removeVisit(visitRow)}>Eliminar</button></div><strong>{money(v.amountCollected)}</strong></div></li>; })}</ul></section>}
 
       {!loading && tab === "products" && <section className="stack"><article className="panel"><h3>Productos</h3><ul className="simple-list">{(data.products || []).map((p) => <li key={p.id}><span>{p.name}</span><strong>{money(p.unitPrice)}</strong></li>)}</ul></article><article className="panel form-panel"><h3>Nuevo producto</h3><form className="form" onSubmit={saveProduct}><label>Nombre<input required value={productForm.name} onChange={(e) => setProductForm((d) => ({ ...d, name: e.target.value }))} /></label><label>Valor unitario<input type="number" min="0" step="0.01" value={productForm.unitPrice} onChange={(e) => setProductForm((d) => ({ ...d, unitPrice: e.target.value }))} /></label><button className="primary full" type="submit">Guardar producto</button></form></article></section>}
 
@@ -443,9 +489,9 @@ export default function App() {
 
       {!loading && tab === "sellers" && <section className="panel"><h3>Vendedores</h3><ul className="simple-list">{(data.sellerOverview || []).map((s) => <li key={s.sellerId}><div><span>{s.sellerName}</span><small>Clientes: {s.totalClients} | Deuda: {money(s.totalDebt)}</small><small>Semana: {money(s.weekSales)} | Mes: {money(s.monthSales)}</small></div><strong>Comision: {money(s.commissionAmount)}</strong></li>)}</ul></section>}
 
-      {!loading && tab === "reports" && <section className="panel"><h3>Reportes y Respaldo</h3><a href={reportUrl} target="_blank" rel="noreferrer" className="primary full fakeBtn">Descargar reporte XLSX</a><div className="miniActions"><button className="secondary btnMini" type="button" onClick={createServerBackup} disabled={backupBusy}>{backupBusy ? "Creando..." : "Crear backup servidor"}</button><a href={dbExportUrl} target="_blank" rel="noreferrer" className="btnMini fakeBtn">Exportar JSON</a></div><p className="preview">Incluye admin y vendedores (misma base de datos).</p>{lastBackupFile ? <p className="preview">Ultimo backup: {lastBackupFile}</p> : null}</section>}
+      {!loading && tab === "reports" && <section className="stack"><article className="panel"><h3>Reportes y Respaldo</h3><a href={reportUrl} target="_blank" rel="noreferrer" className="primary full fakeBtn">Descargar reporte XLSX</a><div className="miniActions"><button className="secondary btnMini" type="button" onClick={createServerBackup} disabled={backupBusy}>{backupBusy ? "Creando..." : "Crear backup servidor"}</button><a href={dbExportUrl} target="_blank" rel="noreferrer" className="btnMini fakeBtn">Exportar JSON</a></div><p className="preview">Incluye admin y vendedores (misma base de datos).</p>{lastBackupFile ? <p className="preview">Ultimo backup: {lastBackupFile}</p> : null}</article><article className="panel"><h3>Degustaciones y Conversion</h3><p className="preview">Degustaciones: {degustationSummary.totalDegustations}</p><p className="preview">Prospectos degustados: {degustationSummary.uniqueProspects}</p><p className="preview">Prospectos convertidos: {degustationSummary.converted}</p><p className="preview">Tasa de conversion: {degustationSummary.conversionRate.toFixed(1)}%</p><ul className="simple-list">{degustationSummary.latest.map((item) => <li key={item.id}><div><span>{item.prospectName}</span><small>{date(item.date)}</small></div><div className="rightCol"><small>{item.status}</small>{item.convertedClientName ? <small>{item.convertedClientName}</small> : null}</div></li>)}</ul>{degustationSummary.latest.length === 0 ? <p className="preview">Sin degustaciones registradas.</p> : null}</article></section>}
 
-      {tab === "newVisit" && <section className="panel form-panel"><h3>Nueva visita</h3><form className="form" onSubmit={saveVisit}><label>Fecha<input type="date" value={visitForm.date} onChange={(e) => setVisitForm((d) => ({ ...d, date: e.target.value }))} /></label><label>Cliente<select value={visitForm.clientId} onChange={(e) => setVisitForm((d) => ({ ...d, clientId: e.target.value }))}><option value="">Selecciona cliente</option>{(data.clients || []).map((c) => <option key={c.id} value={c.id}>{c.tradeName || c.name}</option>)}</select></label><label>Producto<select value={visitForm.productId} onChange={(e) => { const p = data.products.find((x) => x.id === e.target.value); setVisitForm((d) => ({ ...d, productId: e.target.value, unitPrice: d.unitPrice || String(num(p?.unitPrice)) })); }}><option value="">Selecciona producto</option>{(data.products || []).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label><label>Cantidad<input type="number" min="0" step="0.01" value={visitForm.quantity} onChange={(e) => setVisitForm((d) => ({ ...d, quantity: e.target.value }))} /></label><label>Valor unitario<input type="number" min="0" step="0.01" value={visitForm.unitPrice} onChange={(e) => setVisitForm((d) => ({ ...d, unitPrice: e.target.value }))} /></label><label>Restante en cliente<input type="number" min="0" step="0.01" value={visitForm.remaining} onChange={(e) => setVisitForm((d) => ({ ...d, remaining: e.target.value }))} /></label><label>Monto cobrado<input type="number" min="0" step="0.01" value={visitForm.amountCollected} onChange={(e) => setVisitForm((d) => ({ ...d, amountCollected: e.target.value }))} /></label><label>Tipo venta<select value={visitForm.saleType} onChange={(e) => setVisitForm((d) => ({ ...d, saleType: e.target.value }))}><option value="consignado">Consignado</option><option value="a_vista">A vista</option><option value="boleto">Boleto</option></select></label><label>Proxima visita<input type="date" value={visitForm.nextVisitDate} onChange={(e) => setVisitForm((d) => ({ ...d, nextVisitDate: e.target.value }))} /></label><label>Notas<textarea rows="3" value={visitForm.notes} onChange={(e) => setVisitForm((d) => ({ ...d, notes: e.target.value }))} /></label><button className="primary full" type="submit">Guardar visita</button></form></section>}
+      {tab === "newVisit" && <section className="panel form-panel"><h3>Nueva visita</h3><form className="form" onSubmit={saveVisit}><label>Tipo de visita<select value={visitForm.visitType} onChange={(e) => setVisitForm((d) => ({ ...d, visitType: e.target.value, saleType: e.target.value === "degustacion" ? "degustacion" : d.saleType }))}><option value="dispatch">Con despacho</option><option value="count_only">Solo conteo</option><option value="degustacion">Degustacion</option></select></label><label>Fecha<input type="date" value={visitForm.date} onChange={(e) => setVisitForm((d) => ({ ...d, date: e.target.value }))} /></label><label>Cliente (opcional en degustacion)<select value={visitForm.clientId} onChange={(e) => setVisitForm((d) => ({ ...d, clientId: e.target.value }))}><option value="">Selecciona cliente</option>{(data.clients || []).map((c) => <option key={c.id} value={c.id}>{c.tradeName || c.name}</option>)}</select></label>{visitForm.visitType === "degustacion" ? <><label>Prospecto comercio (si no es cliente)<input value={visitForm.prospectTradeName} onChange={(e) => setVisitForm((d) => ({ ...d, prospectTradeName: e.target.value }))} /></label><label>Prospecto responsable<input value={visitForm.prospectBuyerName} onChange={(e) => setVisitForm((d) => ({ ...d, prospectBuyerName: e.target.value }))} /></label><label>Prospecto telefono<input value={visitForm.prospectPhone} onChange={(e) => setVisitForm((d) => ({ ...d, prospectPhone: e.target.value }))} /></label></> : null}<label>Producto<select value={visitForm.productId} onChange={(e) => { const p = data.products.find((x) => x.id === e.target.value); setVisitForm((d) => ({ ...d, productId: e.target.value, unitPrice: d.unitPrice || String(num(p?.unitPrice)) })); }}><option value="">Selecciona producto</option>{(data.products || []).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label><label>Cantidad<input type="number" min="0" step="0.01" value={visitForm.quantity} onChange={(e) => setVisitForm((d) => ({ ...d, quantity: e.target.value }))} /></label>{visitForm.visitType !== "degustacion" ? <label>Valor unitario<input type="number" min="0" step="0.01" value={visitForm.unitPrice} onChange={(e) => setVisitForm((d) => ({ ...d, unitPrice: e.target.value }))} /></label> : null}{visitForm.visitType !== "degustacion" ? <label>Restante en cliente<input type="number" min="0" step="0.01" value={visitForm.remaining} onChange={(e) => setVisitForm((d) => ({ ...d, remaining: e.target.value }))} /></label> : null}{visitForm.visitType !== "degustacion" ? <label>Monto cobrado<input type="number" min="0" step="0.01" value={visitForm.amountCollected} onChange={(e) => setVisitForm((d) => ({ ...d, amountCollected: e.target.value }))} /></label> : null}{visitForm.visitType !== "degustacion" ? <label>Tipo venta<select value={visitForm.saleType} onChange={(e) => setVisitForm((d) => ({ ...d, saleType: e.target.value }))}><option value="consignado">Consignado</option><option value="a_vista">A vista</option><option value="boleto">Boleto</option></select></label> : <label>Tipo venta<input value="degustacion" readOnly /></label>}<label>Proxima visita<input type="date" value={visitForm.nextVisitDate} onChange={(e) => setVisitForm((d) => ({ ...d, nextVisitDate: e.target.value }))} /></label><label>Notas<textarea rows="3" value={visitForm.notes} onChange={(e) => setVisitForm((d) => ({ ...d, notes: e.target.value }))} /></label><button className="primary full" type="submit">Guardar visita</button></form></section>}
       {showClientModal && (
         <div className="modalBackdrop" role="dialog" aria-modal="true">
           <div className="modalCard">
