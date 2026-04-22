@@ -1,7 +1,8 @@
 param(
   [string]$ApiBase = "https://snack-distribuidora-app-production.up.railway.app/api",
   [string]$OutputDir = "$PSScriptRoot\..\server\data\pc-backups",
-  [int]$Retries = 3
+  [int]$Retries = 3,
+  [switch]$AllowEmpty
 )
 
 $ErrorActionPreference = "Stop"
@@ -31,7 +32,19 @@ for ($i = 1; $i -le [Math]::Max(1, $Retries); $i++) {
   try {
     Write-Log ("Intento {0}: exportando desde {1}" -f $i, $uri)
     $response = Invoke-WebRequest -UseBasicParsing -Uri $uri -TimeoutSec 45
-    [System.IO.File]::WriteAllText($target, $response.Content, [System.Text.Encoding]::UTF8)
+    $json = $response.Content | ConvertFrom-Json
+    $clients = @($json.clients).Count
+    $prospects = @($json.prospects).Count
+    $visits = @($json.visits).Count
+    $products = @($json.products).Count
+    $inventory = @($json.inventory).Count
+    $sellers = @($json.sellers).Count
+    $isEmpty = ($clients -eq 0 -and $prospects -eq 0 -and $visits -eq 0 -and $products -eq 0 -and $inventory -eq 0 -and $sellers -eq 0)
+    if ($isEmpty -and -not $AllowEmpty) {
+      throw "Export vacio detectado (0 registros). Backup bloqueado por seguridad."
+    }
+    [System.IO.File]::WriteAllText($target, ($json | ConvertTo-Json -Depth 100), [System.Text.Encoding]::UTF8)
+    Write-Log ("Resumen exportado: clients={0}, visits={1}, products={2}, inventory={3}, sellers={4}" -f $clients, $visits, $products, $inventory, $sellers)
     Write-Log "Backup guardado: $target"
     $lastErr = $null
     break

@@ -16,6 +16,9 @@ const dbPath = process.env.DB_PATH
 const backupsDir = process.env.BACKUPS_DIR
   ? path.resolve(process.env.BACKUPS_DIR)
   : path.join(__dirname, "data", "backups");
+const isProduction = String(process.env.NODE_ENV || "").trim().toLowerCase() === "production";
+const allowSystemMutationInProd = String(process.env.ALLOW_SYSTEM_MUTATION_IN_PROD || "").trim().toLowerCase() === "true";
+const systemMutationToken = String(process.env.SYSTEM_MUTATION_TOKEN || "").trim();
 const DEFAULT_SUGGESTION_MIN = 8;
 
 const app = express();
@@ -116,6 +119,53 @@ function ensureBackupsDir() {
   if (!fs.existsSync(backupsDir)) {
     fs.mkdirSync(backupsDir, { recursive: true });
   }
+}
+
+function getDbSummary(payload) {
+  const safe = payload && typeof payload === "object" ? payload : {};
+  return {
+    clients: Array.isArray(safe.clients) ? safe.clients.length : 0,
+    prospects: Array.isArray(safe.prospects) ? safe.prospects.length : 0,
+    visits: Array.isArray(safe.visits) ? safe.visits.length : 0,
+    products: Array.isArray(safe.products) ? safe.products.length : 0,
+    inventory: Array.isArray(safe.inventory) ? safe.inventory.length : 0,
+    sellers: Array.isArray(safe.sellers) ? safe.sellers.length : 0
+  };
+}
+
+function isDangerouslyEmptyImport(summary) {
+  return (
+    summary.clients === 0 &&
+    summary.prospects === 0 &&
+    summary.visits === 0 &&
+    summary.products === 0 &&
+    summary.inventory === 0 &&
+    summary.sellers === 0
+  );
+}
+
+function ensureSystemMutationAllowed(req, res) {
+  if (!isProduction) return true;
+
+  if (!allowSystemMutationInProd) {
+    res.status(403).json({
+      error:
+        "Endpoint bloqueado en produccion por seguridad. Configura ALLOW_SYSTEM_MUTATION_IN_PROD=true solo temporalmente."
+    });
+    return false;
+  }
+
+  if (systemMutationToken) {
+    const provided =
+      String(req.headers["x-system-mutation-token"] || "").trim() ||
+      String(req.query.token || "").trim();
+    if (!provided || provided !== systemMutationToken) {
+      res.status(401).json({ error: "Token de seguridad invalido para mutacion del sistema." });
+      return false;
+    }
+  }
+
+  return true;
 }
 
 function makeBackupFileName(prefix = "auto") {
@@ -976,6 +1026,8 @@ app.get("/api/system/db-export", (_req, res) => {
 });
 
 app.post("/api/system/db-import", (req, res) => {
+  if (!ensureSystemMutationAllowed(req, res)) return;
+
   const payload = req.body;
   if (!payload || typeof payload !== "object") {
     return res.status(400).json({ error: "JSON de base de datos invalido." });
@@ -998,20 +1050,26 @@ app.post("/api/system/db-import", (req, res) => {
     settings: typeof payload.settings === "object" && payload.settings ? payload.settings : { ownerWeeklyGoal: 0, lastAutoBackupDate: "" }
   };
 
+  const summary = getDbSummary(normalized);
+  const forceEmpty = payload.forceEmpty === true || String(req.query.forceEmpty || "").toLowerCase() === "true";
+  if (isDangerouslyEmptyImport(summary) && !forceEmpty) {
+    return res.status(400).json({
+      error:
+        "Import bloqueado: el JSON esta vacio. Usa forceEmpty=true solo si realmente deseas borrar todo."
+    });
+  }
+
+  writeDbBackup("pre_import");
   writeDb(normalized);
   return res.status(200).json({
     ok: true,
-    summary: {
-      clients: normalized.clients.length,
-      prospects: normalized.prospects.length,
-      visits: normalized.visits.length,
-      products: normalized.products.length,
-      inventory: normalized.inventory.length
-    }
+    summary
   });
 });
 
 app.post("/api/system/restore-backup/:fileName", (req, res) => {
+  if (!ensureSystemMutationAllowed(req, res)) return;
+
   const fileName = String(req.params.fileName || "").trim();
   if (!fileName || fileName.includes("..") || fileName.includes("/") || fileName.includes("\\")) {
     return res.status(400).json({ error: "Nombre de archivo invalido." });
@@ -1031,8 +1089,17 @@ app.post("/api/system/restore-backup/:fileName", (req, res) => {
     if (!payload || typeof payload !== "object") {
       return res.status(400).json({ error: "Contenido del backup invalido." });
     }
+    const summary = getDbSummary(payload);
+    const forceEmpty = req.body?.forceEmpty === true || String(req.query.forceEmpty || "").toLowerCase() === "true";
+    if (isDangerouslyEmptyImport(summary) && !forceEmpty) {
+      return res.status(400).json({
+        error:
+          "Restore bloqueado: backup vacio. Usa forceEmpty=true solo si deseas limpiar toda la base."
+      });
+    }
+    writeDbBackup("pre_restore");
     writeDb(payload);
-    return res.status(200).json({ ok: true, restoredFrom: fileName });
+    return res.status(200).json({ ok: true, restoredFrom: fileName, summary });
   } catch (error) {
     return res.status(500).json({ error: `No fue posible restaurar backup: ${error.message}` });
   }
