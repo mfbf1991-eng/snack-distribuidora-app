@@ -106,6 +106,8 @@ export default function App() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
   const [toast, setToast] = useState("");
+  const [backupBusy, setBackupBusy] = useState(false);
+  const [lastBackupFile, setLastBackupFile] = useState("");
   const [showPanelWeekDetails, setShowPanelWeekDetails] = useState(false);
   const [showPanelDebtDetails, setShowPanelDebtDetails] = useState(false);
 
@@ -930,6 +932,32 @@ export default function App() {
       setToast("Exportando Excel .xlsx");
     } catch {
       setToast("Link copiado para abrir en navegador");
+    }
+  }
+
+  async function createServerBackup() {
+    if (backupBusy) return;
+    try {
+      setBackupBusy(true);
+      const result = await apiPost("/system/backup", {});
+      setLastBackupFile(String(result.fileName || ""));
+      setToast(`Backup OK: ${String(result.fileName || "")}`);
+    } catch (e) {
+      setError(e.message || "No se pudo crear backup");
+    } finally {
+      setBackupBusy(false);
+    }
+  }
+
+  async function exportDbJson() {
+    const base = API_BASE.replace(/\/api$/, "");
+    const url = `${base}/api/system/db-export`;
+    try {
+      await Clipboard.setStringAsync(url);
+      await Linking.openURL(url);
+      setToast("Exportando JSON");
+    } catch {
+      setToast("Link JSON copiado");
     }
   }
 
@@ -1791,7 +1819,11 @@ export default function App() {
                 <Pressable style={styles.copy} onPress={() => { setReportFilters({ from: "", to: "", clientId: "", saleType: "all" }); setReportClientQuery(""); setShowReportClientSuggestions(false); }}><Text style={styles.copyT}>Limpiar filtros</Text></Pressable>
                 <Pressable style={styles.copy} onPress={copyReportSummary}><Text style={styles.copyT}>Copiar resumen</Text></Pressable>
                 <Pressable style={styles.copy} onPress={exportReportExcel}><Text style={styles.copyT}>Exportar Excel (.xlsx)</Text></Pressable>
+                <Pressable style={styles.copy} onPress={createServerBackup} disabled={backupBusy}><Text style={styles.copyT}>{backupBusy ? "Creando backup..." : "Crear backup servidor"}</Text></Pressable>
+                <Pressable style={styles.copy} onPress={exportDbJson}><Text style={styles.copyT}>Exportar JSON</Text></Pressable>
               </View>
+              {lastBackupFile ? <Text style={styles.s}>Ultimo backup: {lastBackupFile}</Text> : null}
+              <Text style={styles.s}>Incluye datos de admin y vendedores (misma base).</Text>
             </View>
 
             <View style={styles.grid}>

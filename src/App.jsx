@@ -82,6 +82,8 @@ export default function App() {
   const [showClientModal, setShowClientModal] = React.useState(false);
   const [showWeekDetails, setShowWeekDetails] = React.useState(false);
   const [showDebtDetails, setShowDebtDetails] = React.useState(false);
+  const [backupBusy, setBackupBusy] = React.useState(false);
+  const [lastBackupFile, setLastBackupFile] = React.useState("");
   const [clientEditId, setClientEditId] = React.useState("");
   const [clientEditForm, setClientEditForm] = React.useState(null);
 
@@ -383,6 +385,20 @@ export default function App() {
     catch (err) { setError(err.message || "Error"); }
   }
 
+  async function createServerBackup() {
+    if (backupBusy) return;
+    try {
+      setBackupBusy(true);
+      const result = await apiPost("/system/backup", {});
+      setLastBackupFile(String(result.fileName || ""));
+      setOk(`Respaldo creado: ${result.fileName || "ok"}`);
+    } catch (err) {
+      setError(err.message || "No se pudo crear respaldo");
+    } finally {
+      setBackupBusy(false);
+    }
+  }
+
   async function removeVisit(visit) {
     const clientName = visit?.clientName || "este cliente";
     const confirmed = window.confirm(`Eliminar visita de "${clientName}" (${visit?.date || "-"})?`);
@@ -397,6 +413,7 @@ export default function App() {
   }
 
   const reportUrl = `${API_BASE}/reports/export-xlsx`;
+  const dbExportUrl = `${API_BASE}/system/db-export`;
 
   return (
     <main className="app-shell">
@@ -426,7 +443,7 @@ export default function App() {
 
       {!loading && tab === "sellers" && <section className="panel"><h3>Vendedores</h3><ul className="simple-list">{(data.sellerOverview || []).map((s) => <li key={s.sellerId}><div><span>{s.sellerName}</span><small>Clientes: {s.totalClients} | Deuda: {money(s.totalDebt)}</small><small>Semana: {money(s.weekSales)} | Mes: {money(s.monthSales)}</small></div><strong>Comision: {money(s.commissionAmount)}</strong></li>)}</ul></section>}
 
-      {!loading && tab === "reports" && <section className="panel"><h3>Reportes</h3><a href={reportUrl} target="_blank" rel="noreferrer" className="primary full fakeBtn">Descargar reporte XLSX</a></section>}
+      {!loading && tab === "reports" && <section className="panel"><h3>Reportes y Respaldo</h3><a href={reportUrl} target="_blank" rel="noreferrer" className="primary full fakeBtn">Descargar reporte XLSX</a><div className="miniActions"><button className="secondary btnMini" type="button" onClick={createServerBackup} disabled={backupBusy}>{backupBusy ? "Creando..." : "Crear backup servidor"}</button><a href={dbExportUrl} target="_blank" rel="noreferrer" className="btnMini fakeBtn">Exportar JSON</a></div><p className="preview">Incluye admin y vendedores (misma base de datos).</p>{lastBackupFile ? <p className="preview">Ultimo backup: {lastBackupFile}</p> : null}</section>}
 
       {tab === "newVisit" && <section className="panel form-panel"><h3>Nueva visita</h3><form className="form" onSubmit={saveVisit}><label>Fecha<input type="date" value={visitForm.date} onChange={(e) => setVisitForm((d) => ({ ...d, date: e.target.value }))} /></label><label>Cliente<select value={visitForm.clientId} onChange={(e) => setVisitForm((d) => ({ ...d, clientId: e.target.value }))}><option value="">Selecciona cliente</option>{(data.clients || []).map((c) => <option key={c.id} value={c.id}>{c.tradeName || c.name}</option>)}</select></label><label>Producto<select value={visitForm.productId} onChange={(e) => { const p = data.products.find((x) => x.id === e.target.value); setVisitForm((d) => ({ ...d, productId: e.target.value, unitPrice: d.unitPrice || String(num(p?.unitPrice)) })); }}><option value="">Selecciona producto</option>{(data.products || []).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label><label>Cantidad<input type="number" min="0" step="0.01" value={visitForm.quantity} onChange={(e) => setVisitForm((d) => ({ ...d, quantity: e.target.value }))} /></label><label>Valor unitario<input type="number" min="0" step="0.01" value={visitForm.unitPrice} onChange={(e) => setVisitForm((d) => ({ ...d, unitPrice: e.target.value }))} /></label><label>Restante en cliente<input type="number" min="0" step="0.01" value={visitForm.remaining} onChange={(e) => setVisitForm((d) => ({ ...d, remaining: e.target.value }))} /></label><label>Monto cobrado<input type="number" min="0" step="0.01" value={visitForm.amountCollected} onChange={(e) => setVisitForm((d) => ({ ...d, amountCollected: e.target.value }))} /></label><label>Tipo venta<select value={visitForm.saleType} onChange={(e) => setVisitForm((d) => ({ ...d, saleType: e.target.value }))}><option value="consignado">Consignado</option><option value="a_vista">A vista</option><option value="boleto">Boleto</option></select></label><label>Proxima visita<input type="date" value={visitForm.nextVisitDate} onChange={(e) => setVisitForm((d) => ({ ...d, nextVisitDate: e.target.value }))} /></label><label>Notas<textarea rows="3" value={visitForm.notes} onChange={(e) => setVisitForm((d) => ({ ...d, notes: e.target.value }))} /></label><button className="primary full" type="submit">Guardar visita</button></form></section>}
       {showClientModal && (
