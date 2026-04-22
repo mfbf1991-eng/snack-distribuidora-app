@@ -1,4 +1,4 @@
-﻿{
+{
   "clients": [],
   "visits": [],
   "sellers": [],
@@ -12,6 +12,6 @@
   "dailyClosures": [],
   "settings": {
     "ownerWeeklyGoal": 0,
-    "lastAutoBackupDate": ""
+    "lastAutoBackupDate": "2026-04-21"
   }
 }

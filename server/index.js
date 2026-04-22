@@ -914,6 +914,71 @@ app.post("/api/system/backup", (_req, res) => {
   return res.status(201).json({ ok: true, ...result });
 });
 
+app.get("/api/system/db-export", (_req, res) => {
+  const data = readDb();
+  return res.status(200).json(data);
+});
+
+app.post("/api/system/db-import", (req, res) => {
+  const payload = req.body;
+  if (!payload || typeof payload !== "object") {
+    return res.status(400).json({ error: "JSON de base de datos invalido." });
+  }
+
+  const normalized = {
+    clients: Array.isArray(payload.clients) ? payload.clients : [],
+    visits: Array.isArray(payload.visits) ? payload.visits : [],
+    sellers: Array.isArray(payload.sellers) ? payload.sellers : [],
+    sellerUsers: Array.isArray(payload.sellerUsers) ? payload.sellerUsers : [],
+    sellerSessions: Array.isArray(payload.sellerSessions) ? payload.sellerSessions : [],
+    appointments: Array.isArray(payload.appointments) ? payload.appointments : [],
+    products: Array.isArray(payload.products) ? payload.products : [],
+    sellerStocks: Array.isArray(payload.sellerStocks) ? payload.sellerStocks : [],
+    inventory: Array.isArray(payload.inventory) ? payload.inventory : [],
+    productGoals: Array.isArray(payload.productGoals) ? payload.productGoals : [],
+    dailyClosures: Array.isArray(payload.dailyClosures) ? payload.dailyClosures : [],
+    settings: typeof payload.settings === "object" && payload.settings ? payload.settings : { ownerWeeklyGoal: 0, lastAutoBackupDate: "" }
+  };
+
+  writeDb(normalized);
+  return res.status(200).json({
+    ok: true,
+    summary: {
+      clients: normalized.clients.length,
+      visits: normalized.visits.length,
+      products: normalized.products.length,
+      inventory: normalized.inventory.length
+    }
+  });
+});
+
+app.post("/api/system/restore-backup/:fileName", (req, res) => {
+  const fileName = String(req.params.fileName || "").trim();
+  if (!fileName || fileName.includes("..") || fileName.includes("/") || fileName.includes("\\")) {
+    return res.status(400).json({ error: "Nombre de archivo invalido." });
+  }
+  if (!fileName.toLowerCase().endsWith(".json")) {
+    return res.status(400).json({ error: "El backup debe ser .json." });
+  }
+
+  ensureBackupsDir();
+  const backupFile = path.join(backupsDir, fileName);
+  if (!fs.existsSync(backupFile)) {
+    return res.status(404).json({ error: "Backup no encontrado." });
+  }
+
+  try {
+    const payload = JSON.parse(fs.readFileSync(backupFile, "utf-8"));
+    if (!payload || typeof payload !== "object") {
+      return res.status(400).json({ error: "Contenido del backup invalido." });
+    }
+    writeDb(payload);
+    return res.status(200).json({ ok: true, restoredFrom: fileName });
+  } catch (error) {
+    return res.status(500).json({ error: `No fue posible restaurar backup: ${error.message}` });
+  }
+});
+
 app.get("/api/data", (_req, res) => {
   const data = readDb();
   const { sellers, changed } = ensureDefaultSellers(data);
