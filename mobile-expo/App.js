@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { View, Text, ScrollView, TextInput, Pressable, StyleSheet, ActivityIndicator, Alert, Modal, Linking, RefreshControl, Image } from "react-native";
+import { View, Text, ScrollView, TextInput, Pressable, StyleSheet, ActivityIndicator, Alert, Modal, Linking, RefreshControl, Image, KeyboardAvoidingView, Platform } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import * as Clipboard from "expo-clipboard";
@@ -10,8 +10,24 @@ const today = () => new Date().toISOString().slice(0, 10);
 const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 const digits = (v) => String(v || "").replace(/\D/g, "");
 const fmt = (d) => (d ? new Date(`${d}T00:00:00`).toLocaleDateString("pt-BR") : "-");
+const money = (v) => new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(num(v));
+const isThisWeekDate = (dateString) => {
+  if (!dateString) return false;
+  const date = new Date(`${dateString}T00:00:00`);
+  const now = new Date();
+  const start = new Date(now);
+  start.setHours(0, 0, 0, 0);
+  const day = (start.getDay() + 6) % 7;
+  start.setDate(start.getDate() - day);
+  const end = new Date(start);
+  end.setDate(start.getDate() + 7);
+  return date >= start && date < end;
+};
 const availabilitySourceLabel = (source) => (String(source || "").toLowerCase() === "conteo" ? "conteo" : "estimado");
+const CLIENT_FORM_INITIAL = { tradeName: "", buyerName: "", cep: "", addressStreet: "", addressNumber: "", addressNeighborhood: "", addressCity: "", addressState: "", location: "", type: "", phone: "", email: "", cpf: "", cnpj: "", ie: "", observations: "", managedByType: "owner", managedBySellerId: "" };
 const LOGO = require("./assets/logo-platanito.jpg");
+TextInput.defaultProps = TextInput.defaultProps || {};
+TextInput.defaultProps.placeholderTextColor = "#8f816f";
 function computeAvailabilityFromVisits(visits, clientId) {
   const timeline = (Array.isArray(visits) ? visits : [])
     .filter((visit) => String(visit.clientId || "") === String(clientId || ""))
@@ -60,6 +76,14 @@ async function apiPost(path, body) {
   if (!r.ok) throw new Error(j.error || "Error al guardar");
   return j;
 }
+async function apiDelete(path) {
+  const r = await fetch(`${API_BASE}${path}`, { method: "DELETE" });
+  const raw = await r.text();
+  let j;
+  try { j = JSON.parse(raw); } catch { j = { error: raw?.slice?.(0, 120) || "Respuesta invalida del servidor" }; }
+  if (!r.ok) throw new Error(j.error || "Error al eliminar");
+  return j;
+}
 
 export default function App() {
   const [tab, setTab] = useState("panel");
@@ -82,10 +106,12 @@ export default function App() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
   const [toast, setToast] = useState("");
+  const [showPanelWeekDetails, setShowPanelWeekDetails] = useState(false);
+  const [showPanelDebtDetails, setShowPanelDebtDetails] = useState(false);
 
   const [data, setData] = useState({ clients: [], visits: [], sellers: [], sellerOverview: [], appointments: [], products: [], inventory: [], productGoals: [], ownerProductGoalProgress: [], settings: { ownerWeeklyGoal: 0 }, dashboard: { totalSoldThisWeek: 0, totalDebt: 0, clientsNeedingVisit: [], topClients: [], ownerWeeklyGoal: 0, ownerWeeklyRemaining: 0, ownerWeeklyProgressPct: 0 } });
 
-  const [clientForm, setClientForm] = useState({ tradeName: "", buyerName: "", cep: "", addressStreet: "", addressNumber: "", addressNeighborhood: "", addressCity: "", addressState: "", location: "", type: "bodega", phone: "", email: "", cnpj: "", ie: "", observations: "", managedByType: "owner", managedBySellerId: "" });
+  const [clientForm, setClientForm] = useState(CLIENT_FORM_INITIAL);
   const [visitForm, setVisitForm] = useState({ date: today(), clientId: "", amountCollected: "", collectionMethod: "efectivo", saleType: "consignado", boletoDays: 7, nextVisitDate: "", notes: "" });
   const [visitItems, setVisitItems] = useState([]);
   const [visitItemDraft, setVisitItemDraft] = useState({ productId: "", productQuery: "", quantity: "", unitPrice: "" });
@@ -473,10 +499,32 @@ export default function App() {
   function confirmMarkVisitAsPaid(visitId) {
     Alert.alert(
       "Confirmar pago",
-      "Deseas marcar este boleto como pagado? Esta accion actualiza la deuda del cliente.",
+      "Deseas marcar esta visita a credito como pagada? Esta accion actualiza la deuda del cliente.",
       [
         { text: "Cancelar", style: "cancel" },
         { text: "Marcar pagado", style: "default", onPress: () => markVisitAsPaid(visitId) }
+      ]
+    );
+  }
+
+  async function deleteVisit(visitId) {
+    try {
+      await apiDelete(`/visits/${visitId}`);
+      setSelectedVisitId("");
+      await loadAll();
+      setToast("Visita eliminada");
+    } catch (e) {
+      setError(e.message || "No se pudo eliminar visita");
+    }
+  }
+
+  function confirmDeleteVisit(visitId) {
+    Alert.alert(
+      "Eliminar visita",
+      "Esta accion elimina la visita y no se puede deshacer.",
+      [
+        { text: "Cancelar", style: "cancel" },
+        { text: "Eliminar", style: "destructive", onPress: () => deleteVisit(visitId) }
       ]
     );
   }
@@ -540,6 +588,16 @@ export default function App() {
       n.location = [n.addressStreet, n.addressNumber, n.addressNeighborhood, n.addressCity, n.addressState].filter(Boolean).join(", ");
       return n;
     });
+  }
+
+  function openClientFormModal() {
+    setClientForm({ ...CLIENT_FORM_INITIAL });
+    setShowClientForm(true);
+  }
+
+  function closeClientFormModal() {
+    setClientForm({ ...CLIENT_FORM_INITIAL });
+    setShowClientForm(false);
   }
 
   function formatClientOption(client) {
@@ -900,8 +958,10 @@ export default function App() {
     if (clientForm.managedByType === "seller" && !clientForm.managedBySellerId) return setError("Selecciona vendedor");
     try {
       await apiPost("/clients", clientForm);
-      setClientForm({ tradeName: "", buyerName: "", cep: "", addressStreet: "", addressNumber: "", addressNeighborhood: "", addressCity: "", addressState: "", location: "", type: "bodega", phone: "", email: "", cnpj: "", ie: "", observations: "", managedByType: "owner", managedBySellerId: "" });
-      setShowClientForm(false); await loadAll(); setTab("clientes");
+      setClientForm({ ...CLIENT_FORM_INITIAL });
+      closeClientFormModal();
+      await loadAll();
+      setTab("clientes");
     } catch (e) { setError(e.message || "Error"); }
   }
 
@@ -1008,14 +1068,84 @@ export default function App() {
   const visitValidation = getVisitValidationState();
   const visitValidationError = getVisitValidationError();
   const canSaveVisit = !visitValidationError;
+  const panelWeekSummary = useMemo(() => {
+    const weekVisits = (data.visits || []).filter((visit) => isThisWeekDate(visit.date));
+    const byProduct = new Map();
+    let totalValue = 0;
+    let totalVista = 0;
+    let totalConsignado = 0;
+    for (const visit of weekVisits) {
+      const visitTotal = num(visit.totalValue ?? visit.soldAmount);
+      totalValue += visitTotal;
+      const saleType = String(visit.saleType || visit.paymentType || "").toLowerCase();
+      if (saleType === "a_vista") totalVista += visitTotal;
+      if (saleType === "consignado") totalConsignado += visitTotal;
+      const items = Array.isArray(visit.items) ? visit.items : [];
+      if (items.length === 0) continue;
+      for (const item of items) {
+        const name = String(item.productName || "Sin producto").trim() || "Sin producto";
+        const current = byProduct.get(name) || { productName: name, quantity: 0, value: 0 };
+        current.quantity += num(item.quantity);
+        current.value += num(item.total || num(item.quantity) * num(item.unitPrice));
+        byProduct.set(name, current);
+      }
+    }
+    const products = [...byProduct.values()].sort((a, b) => b.value - a.value);
+    return { totalValue, totalVista, totalConsignado, products };
+  }, [data.visits]);
+
+  const panelDebtSummary = useMemo(() => {
+    const debtByClient = (data.clients || [])
+      .map((client) => ({
+        clientId: client.id,
+        clientName: client.tradeName || client.name || "Cliente",
+        debt: num(client.debt)
+      }))
+      .filter((item) => item.debt > 0)
+      .sort((a, b) => b.debt - a.debt);
+    const byProduct = new Map();
+    for (const visit of data.visits || []) {
+      const saleType = String(visit.saleType || "").toLowerCase();
+      const paidByBoleto = saleType === "boleto" && !!visit.boletoPaid;
+      const visitTotal = num(visit.totalValue ?? visit.soldAmount);
+      const collected = num(visit.amountCollected);
+      const pending = Math.max(0, paidByBoleto ? 0 : (visitTotal - collected));
+      if (pending <= 0) continue;
+      const items = Array.isArray(visit.items) ? visit.items : [];
+      if (items.length === 0) {
+        const key = "Sin detalle";
+        byProduct.set(key, (byProduct.get(key) || 0) + pending);
+        continue;
+      }
+      const itemsTotal = items.reduce((acc, item) => acc + num(item.total || num(item.quantity) * num(item.unitPrice)), 0);
+      if (itemsTotal <= 0) {
+        const key = "Sin detalle";
+        byProduct.set(key, (byProduct.get(key) || 0) + pending);
+        continue;
+      }
+      for (const item of items) {
+        const key = String(item.productName || "Sin producto").trim() || "Sin producto";
+        const itemTotal = num(item.total || num(item.quantity) * num(item.unitPrice));
+        const share = pending * (itemTotal / itemsTotal);
+        byProduct.set(key, (byProduct.get(key) || 0) + share);
+      }
+    }
+    const debtByProduct = [...byProduct.entries()]
+      .map(([productName, debt]) => ({ productName, debt }))
+      .filter((item) => item.debt > 0)
+      .sort((a, b) => b.debt - a.debt);
+    return { debtByClient, debtByProduct };
+  }, [data.clients, data.visits]);
 
   return (
     <SafeAreaProvider>
       <SafeAreaView style={styles.safe} edges={["top", "bottom"]}><StatusBar style="dark" />
-        <ScrollView
-          contentContainerStyle={styles.wrap}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#d96d20" />}
-        >
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : "height"} keyboardVerticalOffset={Platform.OS === "ios" ? 12 : 0}>
+          <ScrollView
+            contentContainerStyle={styles.wrap}
+            keyboardShouldPersistTaps="handled"
+            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#d96d20" />}
+          >
           <View style={styles.card}>
             <View style={styles.heroLogoWrap}>
               <Image source={LOGO} style={styles.heroLogo} resizeMode="contain" />
@@ -1031,8 +1161,54 @@ export default function App() {
         {!loading && tab === "panel" && (
           <>
             <View style={styles.grid}>
-              <View style={[styles.box, { backgroundColor: "#ffe7c8" }]}><Text>Vendido semana</Text><Text style={styles.big}>{data.dashboard.totalSoldThisWeek}</Text></View>
-              <View style={[styles.box, { backgroundColor: "#dff4ef" }]}><Text>Deuda total</Text><Text style={styles.big}>{num(data.dashboard.totalDebt).toFixed(2)}</Text></View>
+              <Pressable style={[styles.box, { backgroundColor: "#ffe7c8" }]} onPress={() => setShowPanelWeekDetails((p) => !p)}>
+                <View style={styles.panelRow}>
+                  <Text>Vendido esta semana</Text>
+                  <Text style={styles.panelExpand}>{showPanelWeekDetails ? "Ocultar" : "Ver detalle"}</Text>
+                </View>
+                <Text style={styles.big}>{money(panelWeekSummary.totalValue)}</Text>
+                <Text style={styles.s}>Productos vendidos: {panelWeekSummary.products.length}</Text>
+                <Text style={styles.s}>A vista: {money(panelWeekSummary.totalVista)} | Consignado: {money(panelWeekSummary.totalConsignado)}</Text>
+                {showPanelWeekDetails ? (
+                  <View style={styles.panelDetailBox}>
+                    {panelWeekSummary.products.length === 0 ? <Text style={styles.s}>Sin ventas esta semana.</Text> : null}
+                    {panelWeekSummary.products.map((item) => (
+                      <View key={`week_${item.productName}`} style={styles.panelDetailRow}>
+                        <Text style={styles.panelDetailName}>{item.productName}</Text>
+                        <Text style={styles.panelDetailValue}>{num(item.quantity).toFixed(2)} unid | {money(item.value)}</Text>
+                      </View>
+                    ))}
+                  </View>
+                ) : null}
+              </Pressable>
+              <Pressable style={[styles.box, { backgroundColor: "#dff4ef" }]} onPress={() => setShowPanelDebtDetails((p) => !p)}>
+                <View style={styles.panelRow}>
+                  <Text>Deuda total</Text>
+                  <Text style={styles.panelExpand}>{showPanelDebtDetails ? "Ocultar" : "Ver detalle"}</Text>
+                </View>
+                <Text style={styles.big}>{money(data.dashboard.totalDebt)}</Text>
+                <Text style={styles.s}>Clientes con deuda: {panelDebtSummary.debtByClient.length}</Text>
+                {showPanelDebtDetails ? (
+                  <View style={styles.panelDetailBox}>
+                    <Text style={styles.panelDetailTitle}>Deuda por producto</Text>
+                    {panelDebtSummary.debtByProduct.length === 0 ? <Text style={styles.s}>Sin deuda por producto.</Text> : null}
+                    {panelDebtSummary.debtByProduct.map((item) => (
+                      <View key={`debt_prod_${item.productName}`} style={styles.panelDetailRow}>
+                        <Text style={styles.panelDetailName}>{item.productName}</Text>
+                        <Text style={styles.panelDetailValue}>{money(item.debt)}</Text>
+                      </View>
+                    ))}
+                    <Text style={[styles.panelDetailTitle, { marginTop: 8 }]}>Deuda por cliente</Text>
+                    {panelDebtSummary.debtByClient.length === 0 ? <Text style={styles.s}>Sin deuda por cliente.</Text> : null}
+                    {panelDebtSummary.debtByClient.map((item) => (
+                      <View key={`debt_client_${item.clientId}`} style={styles.panelDetailRow}>
+                        <Text style={styles.panelDetailName}>{item.clientName}</Text>
+                        <Text style={styles.panelDetailValue}>{money(item.debt)}</Text>
+                      </View>
+                    ))}
+                  </View>
+                ) : null}
+              </Pressable>
               <View style={[styles.box, { backgroundColor: "#e9f8db" }]}><Text>Clientes por visitar</Text><Text style={styles.big}>{data.dashboard.clientsNeedingVisit.length}</Text></View>
             </View>
             <View style={styles.card}>
@@ -1074,33 +1250,12 @@ export default function App() {
             );
           })}
 
-          {showClientForm && <View style={styles.card}><Text style={styles.t}>Nuevo cliente</Text><Text style={styles.s}>ID interno: automatico.</Text>
-            <View style={styles.tabs}><Pressable style={[styles.tab, clientForm.managedByType === "owner" && styles.tabA]} onPress={() => updateClientForm({ managedByType: "owner", managedBySellerId: "" })}><Text style={[styles.tabT, clientForm.managedByType === "owner" && styles.tabTA]}>Yo</Text></Pressable><Pressable style={[styles.tab, clientForm.managedByType === "seller" && styles.tabA]} onPress={() => updateClientForm({ managedByType: "seller" })}><Text style={[styles.tabT, clientForm.managedByType === "seller" && styles.tabTA]}>Vendedor</Text></Pressable></View>
-            {clientForm.managedByType === "seller" && <View style={styles.tabs}>{sellers.map((s) => <Pressable key={s.id} style={[styles.tab, clientForm.managedBySellerId === s.id && styles.tabA]} onPress={() => updateClientForm({ managedBySellerId: s.id })}><Text style={[styles.tabT, clientForm.managedBySellerId === s.id && styles.tabTA]}>{s.name}</Text></Pressable>)}</View>}
-            <TextInput style={styles.i} placeholder="Nombre comercio" value={clientForm.tradeName} onChangeText={(t) => updateClientForm({ tradeName: t })} />
-            <TextInput style={styles.i} placeholder="Responsable compras" value={clientForm.buyerName} onChangeText={(t) => updateClientForm({ buyerName: t })} />
-            <TextInput style={styles.i} placeholder="CNPJ" value={clientForm.cnpj} onChangeText={(t) => updateClientForm({ cnpj: t })} keyboardType="numeric" />
-            <Pressable style={styles.copy} onPress={lookupCnpj}><Text style={styles.copyT}>{loadingCnpj ? "Buscando..." : "Buscar CNPJ"}</Text></Pressable>
-            <TextInput style={styles.i} placeholder="CEP" value={clientForm.cep} onChangeText={(t) => updateClientForm({ cep: t })} keyboardType="numeric" />
-            <Pressable style={styles.copy} onPress={lookupCep}><Text style={styles.copyT}>{loadingCep ? "Buscando..." : "Buscar CEP"}</Text></Pressable>
-            <TextInput style={styles.i} placeholder="Calle" value={clientForm.addressStreet} onChangeText={(t) => updateClientForm({ addressStreet: t })} />
-            <TextInput style={styles.i} placeholder="Numero predio" value={clientForm.addressNumber} onChangeText={(t) => updateClientForm({ addressNumber: t })} />
-            <TextInput style={styles.i} placeholder="Barrio" value={clientForm.addressNeighborhood} onChangeText={(t) => updateClientForm({ addressNeighborhood: t })} />
-            <TextInput style={styles.i} placeholder="Ciudad" value={clientForm.addressCity} onChangeText={(t) => updateClientForm({ addressCity: t })} />
-            <TextInput style={styles.i} placeholder="Estado" value={clientForm.addressState} onChangeText={(t) => updateClientForm({ addressState: t })} />
-            <TextInput style={styles.i} placeholder="Tipo comercio" value={clientForm.type} onChangeText={(t) => updateClientForm({ type: t })} />
-            <TextInput style={styles.i} placeholder="Telefono" value={clientForm.phone} onChangeText={(t) => updateClientForm({ phone: t })} />
-            <TextInput style={styles.i} placeholder="Correo" value={clientForm.email} onChangeText={(t) => updateClientForm({ email: t })} />
-            <TextInput style={styles.i} placeholder="IE" value={clientForm.ie} onChangeText={(t) => updateClientForm({ ie: t })} />
-            <TextInput style={[styles.i, { minHeight: 80 }]} multiline placeholder="Observaciones" value={clientForm.observations} onChangeText={(t) => updateClientForm({ observations: t })} />
-            <Pressable style={styles.btn} onPress={addClient}><Text style={styles.btnT}>Guardar cliente</Text></Pressable>
-          </View>}
         </>}
 
         {!loading && tab === "clientes" && !!selectedClientId && selectedClient && <>
           <View style={styles.card}><Pressable style={styles.copy} onPress={() => { setSelectedClientId(""); setSelectedClientSaleVisitId(""); setShowClientSalesList(false); setShowClientAccount(false); setShowActions(false); setShowSchedule(false); }}><Text style={styles.copyT}>Volver</Text></Pressable><Text style={styles.h2}>{selectedClient.tradeName || selectedClient.name}</Text></View>
           <View style={styles.card}><Text style={styles.t}>1. Informacion del cliente</Text>
-            <Field label="ID interno" value={selectedClient.internalId} /><Field label="Responsable" value={selectedClient.buyerName || selectedClient.contact} /><Field label="Telefono" value={selectedClient.phone} /><Field label="Correo" value={selectedClient.email} /><Field label="CNPJ" value={selectedClient.cnpj} /><Field label="IE" value={selectedClient.ie} /><Field label="CEP" value={selectedClient.cep} /><Field label="Direccion" value={selectedClient.location} /><Field label="Tipo" value={selectedClient.type} /><Field label="Atendido por" value={selectedClient.managedByName} /><Field label="Observaciones" value={selectedClient.observations} />
+            <Field label="ID interno" value={selectedClient.internalId} /><Field label="Responsable" value={selectedClient.buyerName || selectedClient.contact} /><Field label="Telefono" value={selectedClient.phone} /><Field label="Correo" value={selectedClient.email} /><Field label="CPF" value={selectedClient.cpf} /><Field label="CNPJ" value={selectedClient.cnpj} /><Field label="IE" value={selectedClient.ie} /><Field label="CEP" value={selectedClient.cep} /><Field label="Direccion" value={selectedClient.location} /><Field label="Tipo" value={selectedClient.type} /><Field label="Atendido por" value={selectedClient.managedByName} /><Field label="Observaciones" value={selectedClient.observations} />
             <Text style={styles.tSection}>Disponibilidad actual (cliente)</Text>
             {selectedClientAvailability.map((item, idx) => (
               <View key={`${selectedClient.id}_pa_${idx}`} style={styles.itemLine}>
@@ -1289,6 +1444,24 @@ export default function App() {
               <Text style={styles.s}>Cobrado: {num(selectedVisit.amountCollected).toFixed(2)}</Text>
               <Text style={styles.s}>Proxima visita: {selectedVisit.nextVisitDate || "-"}</Text>
               <Text style={styles.s}>Notas: {selectedVisit.notes || "-"}</Text>
+              {(() => {
+                const saleType = String(selectedVisit.saleType || selectedVisit.paymentType || "").toLowerCase();
+                const total = num(selectedVisit.totalValue ?? selectedVisit.soldAmount);
+                const pending = Math.max(0, total - num(selectedVisit.amountCollected));
+                const canMarkPaid = (saleType === "consignado" || saleType === "boleto") && pending > 0;
+                return (
+                  <View style={styles.rowWrap}>
+                    {canMarkPaid ? (
+                      <Pressable style={styles.copy} onPress={() => confirmMarkVisitAsPaid(selectedVisit.id)}>
+                        <Text style={styles.copyT}>Marcar pagado</Text>
+                      </Pressable>
+                    ) : null}
+                    <Pressable style={[styles.copy, styles.copyDanger]} onPress={() => confirmDeleteVisit(selectedVisit.id)}>
+                      <Text style={[styles.copyT, styles.copyDangerText]}>Eliminar visita</Text>
+                    </Pressable>
+                  </View>
+                );
+              })()}
             </View>
 
             <View style={styles.card}>
@@ -1862,9 +2035,10 @@ export default function App() {
           {!canSaveVisit ? <Text style={styles.warnHint}>Completa los datos obligatorios para habilitar Guardar.</Text> : null}
           <Pressable style={[styles.btn, !canSaveVisit && styles.btnDisabled]} disabled={!canSaveVisit} onPress={addVisit}><Text style={styles.btnT}>Guardar visita</Text></Pressable>
         </View>}
-        </ScrollView>
+          </ScrollView>
+        </KeyboardAvoidingView>
 
-      {!loading && tab === "clientes" && !selectedClientId && <Pressable style={styles.fab} onPress={() => setShowClientForm((p) => !p)}><Text style={styles.fabT}>{showClientForm ? "x" : "+"}</Text></Pressable>}
+      {!loading && tab === "clientes" && !selectedClientId && <Pressable style={styles.fab} onPress={openClientFormModal}><Text style={styles.fabT}>+</Text></Pressable>}
       {!loading && tab === "clientes" && !!selectedClientId && <>
         {showActions && <View style={styles.menu}><Pressable style={styles.menuI} onPress={openRegisterVisit}><Text style={styles.menuT}>Registrar visita</Text></Pressable><Pressable style={styles.menuI} onPress={() => { setShowActions(false); setShowSchedule((p) => !p); }}><Text style={styles.menuT}>Agendar visita</Text></Pressable></View>}
         <Pressable style={styles.fab} onPress={() => setShowActions((p) => !p)}><Text style={styles.fabT}>{showActions ? "x" : "+"}</Text></Pressable>
@@ -1880,6 +2054,40 @@ export default function App() {
           <Text style={styles.fabT}>{showProductForm ? "x" : "+"}</Text>
         </Pressable>
       )}
+
+      <Modal transparent visible={showClientForm} animationType="fade" onRequestClose={closeClientFormModal}>
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <ScrollView contentContainerStyle={{ paddingBottom: 8 }} keyboardShouldPersistTaps="handled">
+              <Text style={styles.t}>Nuevo cliente</Text>
+              <Text style={styles.s}>ID interno: automatico.</Text>
+              <View style={styles.tabs}><Pressable style={[styles.tab, clientForm.managedByType === "owner" && styles.tabA]} onPress={() => updateClientForm({ managedByType: "owner", managedBySellerId: "" })}><Text style={[styles.tabT, clientForm.managedByType === "owner" && styles.tabTA]}>Yo</Text></Pressable><Pressable style={[styles.tab, clientForm.managedByType === "seller" && styles.tabA]} onPress={() => updateClientForm({ managedByType: "seller" })}><Text style={[styles.tabT, clientForm.managedByType === "seller" && styles.tabTA]}>Vendedor</Text></Pressable></View>
+              {clientForm.managedByType === "seller" && <View style={styles.tabs}>{sellers.map((s) => <Pressable key={s.id} style={[styles.tab, clientForm.managedBySellerId === s.id && styles.tabA]} onPress={() => updateClientForm({ managedBySellerId: s.id })}><Text style={[styles.tabT, clientForm.managedBySellerId === s.id && styles.tabTA]}>{s.name}</Text></Pressable>)}</View>}
+              <TextInput style={styles.i} placeholder="Nombre comercio" value={clientForm.tradeName} onChangeText={(t) => updateClientForm({ tradeName: t })} />
+              <TextInput style={styles.i} placeholder="Responsable compras" value={clientForm.buyerName} onChangeText={(t) => updateClientForm({ buyerName: t })} />
+              <TextInput style={styles.i} placeholder="CPF" value={clientForm.cpf} onChangeText={(t) => updateClientForm({ cpf: t })} keyboardType="numeric" />
+              <TextInput style={styles.i} placeholder="CNPJ" value={clientForm.cnpj} onChangeText={(t) => updateClientForm({ cnpj: t })} keyboardType="numeric" />
+              <Pressable style={styles.copy} onPress={lookupCnpj}><Text style={styles.copyT}>{loadingCnpj ? "Buscando..." : "Buscar CNPJ"}</Text></Pressable>
+              <TextInput style={styles.i} placeholder="CEP" value={clientForm.cep} onChangeText={(t) => updateClientForm({ cep: t })} keyboardType="numeric" />
+              <Pressable style={styles.copy} onPress={lookupCep}><Text style={styles.copyT}>{loadingCep ? "Buscando..." : "Buscar CEP"}</Text></Pressable>
+              <TextInput style={styles.i} placeholder="Calle" value={clientForm.addressStreet} onChangeText={(t) => updateClientForm({ addressStreet: t })} />
+              <TextInput style={styles.i} placeholder="Numero predio" value={clientForm.addressNumber} onChangeText={(t) => updateClientForm({ addressNumber: t })} />
+              <TextInput style={styles.i} placeholder="Barrio" value={clientForm.addressNeighborhood} onChangeText={(t) => updateClientForm({ addressNeighborhood: t })} />
+              <TextInput style={styles.i} placeholder="Ciudad" value={clientForm.addressCity} onChangeText={(t) => updateClientForm({ addressCity: t })} />
+              <TextInput style={styles.i} placeholder="Estado" value={clientForm.addressState} onChangeText={(t) => updateClientForm({ addressState: t })} />
+              <TextInput style={styles.i} placeholder="Tipo comercio" value={clientForm.type} onChangeText={(t) => updateClientForm({ type: t })} />
+              <TextInput style={styles.i} placeholder="Telefono" value={clientForm.phone} onChangeText={(t) => updateClientForm({ phone: t })} />
+              <TextInput style={styles.i} placeholder="Correo" value={clientForm.email} onChangeText={(t) => updateClientForm({ email: t })} />
+              <TextInput style={styles.i} placeholder="IE" value={clientForm.ie} onChangeText={(t) => updateClientForm({ ie: t })} />
+              <TextInput style={[styles.i, { minHeight: 80 }]} multiline placeholder="Observaciones" value={clientForm.observations} onChangeText={(t) => updateClientForm({ observations: t })} />
+              <View style={styles.modalActions}>
+                <Pressable style={styles.copy} onPress={closeClientFormModal}><Text style={styles.copyT}>Cancelar</Text></Pressable>
+                <Pressable style={styles.btnMini} onPress={addClient}><Text style={styles.btnT}>Guardar</Text></Pressable>
+              </View>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
 
       <Modal transparent visible={showSchedule} animationType="fade" onRequestClose={() => setShowSchedule(false)}>
         <View style={styles.modalBackdrop}>
@@ -1979,7 +2187,14 @@ const styles = StyleSheet.create({
   tabs: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 10 }, tab: { paddingVertical: 8, paddingHorizontal: 12, borderRadius: 20, backgroundColor: "#f6efe6" }, tabA: { backgroundColor: "#d96d20" }, tabT: { color: "#6c5b48", fontWeight: "700", fontSize: 12 }, tabTA: { color: "#fff" },
   err: { marginTop: 10, color: "#b20000", backgroundColor: "#ffe9e9", padding: 10, borderRadius: 10 }, ok: { marginTop: 10, color: "#0f5132", backgroundColor: "#d1e7dd", padding: 10, borderRadius: 10 },
   grid: { marginTop: 10, gap: 8 }, box: { borderRadius: 14, padding: 12 }, big: { fontSize: 24, fontWeight: "800", color: "#2f251d" },
-  i: { borderWidth: 1, borderColor: "#dfcfbb", borderRadius: 10, paddingHorizontal: 10, paddingVertical: 10, marginTop: 8, backgroundColor: "#fffdf9" },
+  panelRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 8 },
+  panelExpand: { color: "#7d5e37", fontWeight: "700", fontSize: 12 },
+  panelDetailBox: { marginTop: 10, borderTopWidth: 1, borderTopColor: "#ecd5b4", paddingTop: 8, gap: 6 },
+  panelDetailTitle: { color: "#5a432b", fontWeight: "800", fontSize: 12, textTransform: "uppercase" },
+  panelDetailRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 8 },
+  panelDetailName: { flex: 1, color: "#3f2f1e", fontWeight: "700" },
+  panelDetailValue: { color: "#5a432b", fontWeight: "700" },
+  i: { borderWidth: 1, borderColor: "#dfcfbb", borderRadius: 10, paddingHorizontal: 10, paddingVertical: 10, marginTop: 8, backgroundColor: "#fffdf9", color: "#2f251d" },
   datePickerText: { color: "#2f251d", fontWeight: "600" },
   selectorShell: { marginTop: 8, minHeight: 42, borderRadius: 10, backgroundColor: "#fffdf9", borderWidth: 1, borderColor: "#dfcfbb", flexDirection: "row", alignItems: "center", paddingLeft: 10, paddingRight: 6 },
   selectorInput: { flex: 1, color: "#2f251d", fontSize: 14, fontWeight: "500", paddingVertical: 8, paddingRight: 6 },
@@ -1999,7 +2214,10 @@ const styles = StyleSheet.create({
   btn: { marginTop: 12, backgroundColor: "#d96d20", paddingVertical: 12, borderRadius: 10, alignItems: "center" }, btnT: { color: "#fff", fontWeight: "800" },
   btnDisabled: { backgroundColor: "#d6b294" }, warnHint: { marginTop: 8, color: "#8a5a2d", fontWeight: "600" },
   row: { flexDirection: "row", gap: 10, alignItems: "center", paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: "#f4e7d5" }, small: { color: "#7d7266", fontSize: 12 }, bold: { color: "#2f251d", fontWeight: "700" },
+  rowWrap: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 8 },
   copy: { marginTop: 8, backgroundColor: "#f1e3d2", borderRadius: 10, paddingHorizontal: 10, paddingVertical: 8, alignItems: "center" }, copyT: { color: "#704f2b", fontWeight: "700", fontSize: 12 },
+  copyDanger: { backgroundColor: "#ffe3e0", borderWidth: 1, borderColor: "#f1b2ab" },
+  copyDangerText: { color: "#ad2f24" },
   quick: { flexDirection: "row", gap: 8, marginTop: 10, flexWrap: "wrap" }, quickBtn: { backgroundColor: "#f1e3d2", paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10 }, quickTxt: { color: "#704f2b", fontWeight: "700", fontSize: 12 },
   lock: { marginTop: 8, backgroundColor: "#e8f0fe", borderRadius: 10, paddingHorizontal: 10, paddingVertical: 10, borderWidth: 1, borderColor: "#c5d8fb" }, lockT: { color: "#2e5aac", fontWeight: "700", fontSize: 12 },
   fab: { position: "absolute", right: 22, bottom: 24, width: 58, height: 58, borderRadius: 29, backgroundColor: "#d96d20", alignItems: "center", justifyContent: "center", elevation: 4 }, fabT: { color: "#fff", fontSize: 30, lineHeight: 32, fontWeight: "700" },

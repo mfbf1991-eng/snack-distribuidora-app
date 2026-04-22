@@ -8,6 +8,8 @@ import ExcelJS from "exceljs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const webDistPath = path.resolve(__dirname, "..", "dist");
+const webIndexPath = path.join(webDistPath, "index.html");
 const dbPath = process.env.DB_PATH
   ? path.resolve(process.env.DB_PATH)
   : path.join(__dirname, "data", "db.json");
@@ -21,6 +23,10 @@ const PORT = process.env.PORT || 4000;
 
 app.use(cors());
 app.use(express.json());
+
+if (fs.existsSync(webIndexPath)) {
+  app.use(express.static(webDistPath));
+}
 
 function parseNumber(value) {
   const n = Number(value);
@@ -160,6 +166,72 @@ function normalizeInventoryItem(rawItem = {}) {
   };
 }
 
+function restoreDispatchStockOnVisitDelete(data, visit) {
+  const visitType = String(visit?.visitType || "dispatch").trim().toLowerCase();
+  if (visitType === "count_only") return;
+
+  const items = (Array.isArray(visit?.items) ? visit.items : [])
+    .map((line) => ({
+      productId: String(line?.productId || "").trim(),
+      productName: String(line?.productName || "").trim(),
+      quantity: Math.max(0, parseNumber(line?.quantity))
+    }))
+    .filter((line) => line.productName && line.quantity > 0);
+  if (!items.length) return;
+
+  const sellerId = String(visit?.createdBySellerId || "").trim();
+  if (sellerId) {
+    const stocks = Array.isArray(data.sellerStocks) ? data.sellerStocks : [];
+    for (const line of items) {
+      const byId = line.productId
+        ? stocks.find((item) => String(item.sellerId) === sellerId && String(item.productId) === line.productId)
+        : null;
+      const byName = stocks.find((item) =>
+        String(item.sellerId) === sellerId &&
+        String(item.productName || "").trim().toLowerCase() === String(line.productName || "").trim().toLowerCase()
+      );
+      const stock = byId || byName;
+      if (stock) {
+        stock.quantity = Math.max(0, parseNumber(stock.quantity) + line.quantity);
+        stock.updatedAt = nowIso();
+      } else {
+        stocks.push({
+          id: uid("seller_stock"),
+          sellerId,
+          productId: line.productId,
+          productName: line.productName,
+          quantity: line.quantity,
+          notes: "Restaurado por eliminacion de visita",
+          updatedAt: nowIso()
+        });
+      }
+    }
+    data.sellerStocks = stocks;
+    return;
+  }
+
+  const inventory = (Array.isArray(data.inventory) ? data.inventory : []).map(normalizeInventoryItem);
+  for (const line of items) {
+    const byId = line.productId
+      ? inventory.find((item) => String(item.productId) === line.productId)
+      : null;
+    const byName = inventory.find((item) => String(item.productName || "").trim().toLowerCase() === String(line.productName || "").trim().toLowerCase());
+    const stock = byId || byName;
+    if (stock) {
+      stock.quantity = Math.max(0, parseNumber(stock.quantity) + line.quantity);
+      stock.updatedAt = nowIso();
+    } else {
+      inventory.push(normalizeInventoryItem({
+        productId: line.productId,
+        productName: line.productName,
+        quantity: line.quantity,
+        updatedAt: nowIso()
+      }));
+    }
+  }
+  data.inventory = inventory;
+}
+
 function normalizeProductGoal(rawGoal = {}) {
   return {
     id: String(rawGoal.id || uid("goal")).trim(),
@@ -189,6 +261,7 @@ function normalizeClient(rawClient = {}) {
     type: String(rawClient.type || "bodega").trim(),
     phone: String(rawClient.phone || "").trim(),
     email: String(rawClient.email || "").trim(),
+    cpf: String(rawClient.cpf || "").trim(),
     cnpj: String(rawClient.cnpj || "").trim(),
     ie: String(rawClient.ie || "").trim(),
     observations: String(rawClient.observations || "").trim(),
@@ -198,6 +271,31 @@ function normalizeClient(rawClient = {}) {
     name: String(rawClient.tradeName || rawClient.name || "").trim(),
     contact: String(rawClient.buyerName || rawClient.contact || "").trim()
   };
+}
+
+function hasDuplicateClient(clients, candidate, options = {}) {
+  const excludeId = String(options.excludeId || "").trim();
+  const scopeSellerId = String(options.scopeSellerId || "").trim();
+  const candTradeName = String(candidate.tradeName || "").trim().toLowerCase();
+  const candBuyerName = String(candidate.buyerName || "").trim().toLowerCase();
+  const candCpf = cleanDigits(candidate.cpf || "");
+  const candCnpj = cleanDigits(candidate.cnpj || "");
+
+  return (clients || []).some((raw) => {
+    const current = normalizeClient(raw || {});
+    if (excludeId && String(current.id) === excludeId) return false;
+    if (scopeSellerId && String(current.managedBySellerId || "") !== scopeSellerId) return false;
+
+    const currentCpf = cleanDigits(current.cpf || "");
+    const currentCnpj = cleanDigits(current.cnpj || "");
+    if (candCpf && currentCpf && candCpf === currentCpf) return true;
+    if (candCnpj && currentCnpj && candCnpj === currentCnpj) return true;
+
+    const currentTradeName = String(current.tradeName || current.name || "").trim().toLowerCase();
+    const currentBuyerName = String(current.buyerName || current.contact || "").trim().toLowerCase();
+    if (candTradeName && candBuyerName && candTradeName === currentTradeName && candBuyerName === currentBuyerName) return true;
+    return false;
+  });
 }
 
 async function fetchJson(url, timeoutMs = 10000) {
@@ -1099,6 +1197,10 @@ app.post("/api/clients", (req, res) => {
     }
   }
 
+  if (hasDuplicateClient(data.clients, normalized)) {
+    return res.status(409).json({ error: "Ya existe un cliente con estos datos (CPF/CNPJ o comercio+responsable)." });
+  }
+
   const newClient = normalizeClient({
     id: uid("client"),
     ...normalized,
@@ -1110,6 +1212,70 @@ app.post("/api/clients", (req, res) => {
   writeDb(data);
 
   return res.status(201).json(newClient);
+});
+
+app.put("/api/clients/:id", (req, res) => {
+  const clientId = String(req.params.id || "").trim();
+  if (!clientId) return res.status(400).json({ error: "ID de cliente invalido." });
+
+  const body = req.body || {};
+  const normalized = normalizeClient(body);
+  if (!normalized.tradeName) {
+    return res.status(400).json({ error: "El nombre del cliente es obligatorio." });
+  }
+
+  const data = readDb();
+  const { sellers, changed } = ensureDefaultSellers(data);
+  if (changed) {
+    data.sellers = sellers;
+  }
+
+  const index = data.clients.findIndex((client) => String(client.id) === clientId);
+  if (index < 0) return res.status(404).json({ error: "Cliente no encontrado." });
+
+  if (normalized.managedByType === "seller") {
+    const sellerExists = sellers.some((seller) => seller.id === normalized.managedBySellerId && seller.active);
+    if (!sellerExists) {
+      return res.status(400).json({ error: "Selecciona un vendedor valido para este cliente." });
+    }
+  }
+
+  if (hasDuplicateClient(data.clients, normalized, { excludeId: clientId })) {
+    return res.status(409).json({ error: "Ya existe otro cliente con estos datos (CPF/CNPJ o comercio+responsable)." });
+  }
+
+  const current = normalizeClient(data.clients[index] || {});
+  const updated = normalizeClient({
+    ...current,
+    ...normalized,
+    id: current.id,
+    internalId: String(current.internalId || "").trim(),
+    createdAt: current.createdAt || new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  });
+
+  data.clients[index] = updated;
+  writeDb(data);
+  return res.status(200).json(updated);
+});
+
+app.delete("/api/clients/:id", (req, res) => {
+  const clientId = String(req.params.id || "").trim();
+  if (!clientId) return res.status(400).json({ error: "ID de cliente invalido." });
+
+  const data = readDb();
+  const index = data.clients.findIndex((client) => String(client.id) === clientId);
+  if (index < 0) return res.status(404).json({ error: "Cliente no encontrado." });
+
+  const hasVisits = (data.visits || []).some((visit) => String(visit.clientId) === clientId);
+  if (hasVisits) {
+    return res.status(409).json({ error: "No se puede eliminar: este cliente tiene visitas registradas." });
+  }
+
+  data.clients = data.clients.filter((client) => String(client.id) !== clientId);
+  data.appointments = (data.appointments || []).filter((appointment) => String(appointment.clientId) !== clientId);
+  writeDb(data);
+  return res.json({ ok: true });
 });
 
 app.get("/api/sellers", (_req, res) => {
@@ -1195,6 +1361,9 @@ app.post("/api/seller-app/clients", (req, res) => {
   const body = req.body || {};
   const normalized = normalizeClient(body);
   if (!normalized.tradeName) return res.status(400).json({ error: "Nombre comercio obligatorio." });
+  if (hasDuplicateClient(data.clients, normalized, { scopeSellerId: ctx.seller.id })) {
+    return res.status(409).json({ error: "Ya existe este cliente en tu cartera (CPF/CNPJ o comercio+responsable)." });
+  }
 
   const newClient = normalizeClient({
     id: uid("client"),
@@ -1375,6 +1544,7 @@ app.post("/api/seller-app/visits", (req, res) => {
     collectionMethod: collectionMethod || (amountCollected > 0 ? "efectivo" : ""),
     paymentType: String(body.paymentType || saleType || "consignado"),
     saleType,
+    createdBySellerId: ctx.seller.id,
     boletoDays: safeBoletoDays,
     dueDate,
     boletoPaid: saleType === "boleto" ? false : true,
@@ -1670,6 +1840,29 @@ app.post("/api/visits", (req, res) => {
     notes: String(body.notes || "").trim()
   };
 
+  // Discount from global inventory for admin dispatch visits.
+  if (visitType !== "count_only") {
+    const inventory = (Array.isArray(data.inventory) ? data.inventory : []).map(normalizeInventoryItem);
+    for (const line of items) {
+      const byId = line.productId
+        ? inventory.find((item) => String(item.productId) === line.productId)
+        : null;
+      const byName = inventory.find((item) => String(item.productName || "").trim().toLowerCase() === String(line.productName || "").trim().toLowerCase());
+      const stock = byId || byName;
+      if (!stock) {
+        return res.status(400).json({ error: `Inventario no encontrado para ${line.productName}.` });
+      }
+      const currentQty = parseNumber(stock.quantity);
+      const dispatchQty = parseNumber(line.quantity);
+      if (currentQty < dispatchQty) {
+        return res.status(400).json({ error: `Inventario insuficiente para ${line.productName}. Disponible: ${currentQty}.` });
+      }
+      stock.quantity = currentQty - dispatchQty;
+      stock.updatedAt = nowIso();
+    }
+    data.inventory = inventory;
+  }
+
   data.visits.push(newVisit);
 
   const pendingAppointments = data.appointments
@@ -1706,6 +1899,22 @@ app.post("/api/visits/:visitId/mark-paid", (req, res) => {
   writeDb(data);
 
   return res.status(200).json(visit);
+});
+
+app.delete("/api/visits/:visitId", (req, res) => {
+  const visitId = String(req.params.visitId || "").trim();
+  if (!visitId) return res.status(400).json({ error: "Visita invalida." });
+
+  const data = readDb();
+  const visitIndex = (Array.isArray(data.visits) ? data.visits : []).findIndex((item) => String(item.id) === visitId);
+  if (visitIndex < 0) return res.status(404).json({ error: "Visita no encontrada." });
+
+  const visit = data.visits[visitIndex];
+  restoreDispatchStockOnVisitDelete(data, visit);
+  data.visits.splice(visitIndex, 1);
+  writeDb(data);
+
+  return res.status(200).json({ ok: true, visitId });
 });
 
 app.post("/api/appointments", (req, res) => {
@@ -2350,6 +2559,13 @@ app.get("/api/reports/export-xlsx", async (req, res) => {
     return res.status(500).json({ error: `No fue posible generar Excel: ${error.message}` });
   }
 });
+
+if (fs.existsSync(webIndexPath)) {
+  app.get("*", (req, res, next) => {
+    if (req.path.startsWith("/api")) return next();
+    return res.sendFile(webIndexPath);
+  });
+}
 
 app.listen(PORT, () => {
   runAutomaticMaintenance("startup");
