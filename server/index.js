@@ -166,6 +166,53 @@ function normalizeInventoryItem(rawItem = {}) {
   };
 }
 
+function normalizeTextKey(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
+
+function findStockByProduct(stocks, line, sellerId = "") {
+  const productId = String(line?.productId || "").trim();
+  if (productId) {
+    const byId = (stocks || []).find((item) => {
+      if (sellerId && String(item.sellerId) !== String(sellerId)) return false;
+      return String(item.productId || "").trim() === productId;
+    });
+    if (byId) return byId;
+  }
+
+  const lineNameKey = normalizeTextKey(line?.productName || "");
+  if (!lineNameKey) return null;
+  const candidates = (stocks || []).filter((item) => {
+    if (sellerId && String(item.sellerId) !== String(sellerId)) return false;
+    return normalizeTextKey(item.productName || "") === lineNameKey;
+  });
+  if (candidates.length === 1) return candidates[0];
+
+  const fuzzy = (stocks || []).filter((item) => {
+    if (sellerId && String(item.sellerId) !== String(sellerId)) return false;
+    const key = normalizeTextKey(item.productName || "");
+    return key.includes(lineNameKey) || lineNameKey.includes(key);
+  });
+  if (fuzzy.length === 1) return fuzzy[0];
+  if (fuzzy.length > 1) {
+    // Practical fallback: prefer names starting with typed value,
+    // then pick the one with most available quantity.
+    const startsWith = fuzzy.filter((item) => {
+      const key = normalizeTextKey(item.productName || "");
+      return key.startsWith(lineNameKey);
+    });
+    const pool = startsWith.length > 0 ? startsWith : fuzzy;
+    const sorted = [...pool].sort((a, b) => parseNumber(b.quantity) - parseNumber(a.quantity));
+    return sorted[0] || null;
+  }
+  return null;
+}
+
 function restoreDispatchStockOnVisitDelete(data, visit) {
   const visitType = String(visit?.visitType || "dispatch").trim().toLowerCase();
   if (visitType === "count_only") return;
@@ -183,14 +230,7 @@ function restoreDispatchStockOnVisitDelete(data, visit) {
   if (sellerId) {
     const stocks = Array.isArray(data.sellerStocks) ? data.sellerStocks : [];
     for (const line of items) {
-      const byId = line.productId
-        ? stocks.find((item) => String(item.sellerId) === sellerId && String(item.productId) === line.productId)
-        : null;
-      const byName = stocks.find((item) =>
-        String(item.sellerId) === sellerId &&
-        String(item.productName || "").trim().toLowerCase() === String(line.productName || "").trim().toLowerCase()
-      );
-      const stock = byId || byName;
+      const stock = findStockByProduct(stocks, line, sellerId);
       if (stock) {
         stock.quantity = Math.max(0, parseNumber(stock.quantity) + line.quantity);
         stock.updatedAt = nowIso();
@@ -212,11 +252,7 @@ function restoreDispatchStockOnVisitDelete(data, visit) {
 
   const inventory = (Array.isArray(data.inventory) ? data.inventory : []).map(normalizeInventoryItem);
   for (const line of items) {
-    const byId = line.productId
-      ? inventory.find((item) => String(item.productId) === line.productId)
-      : null;
-    const byName = inventory.find((item) => String(item.productName || "").trim().toLowerCase() === String(line.productName || "").trim().toLowerCase());
-    const stock = byId || byName;
+    const stock = findStockByProduct(inventory, line);
     if (stock) {
       stock.quantity = Math.max(0, parseNumber(stock.quantity) + line.quantity);
       stock.updatedAt = nowIso();
@@ -1777,22 +1813,11 @@ app.post("/api/seller-app/visits", (req, res) => {
     notes: String(body.notes || "").trim()
   };
 
-  if (!isDegustation && client) {
-    autoConvertProspectsForClient(data, client);
-  }
-
   // Discount stock from seller's pronta-entrega inventory.
   if (visitType !== "count_only") {
     const stocks = Array.isArray(data.sellerStocks) ? data.sellerStocks : [];
     for (const line of items) {
-      const byId = line.productId
-        ? stocks.find((item) => String(item.sellerId) === ctx.seller.id && String(item.productId) === line.productId)
-        : null;
-      const byName = stocks.find((item) =>
-        String(item.sellerId) === ctx.seller.id &&
-        String(item.productName || "").trim().toLowerCase() === String(line.productName || "").trim().toLowerCase()
-      );
-      const stock = byId || byName;
+      const stock = findStockByProduct(stocks, line, ctx.seller.id);
       if (!stock) {
         return res.status(400).json({ error: `Sin stock cargado para ${line.productName}.` });
       }
@@ -2097,15 +2122,15 @@ app.post("/api/visits", (req, res) => {
     notes: String(body.notes || "").trim()
   };
 
+  if (!isDegustation && client) {
+    autoConvertProspectsForClient(data, client);
+  }
+
   // Discount from global inventory for admin dispatch/degustacion visits.
   if (!isCountOnly) {
     const inventory = (Array.isArray(data.inventory) ? data.inventory : []).map(normalizeInventoryItem);
     for (const line of items) {
-      const byId = line.productId
-        ? inventory.find((item) => String(item.productId) === line.productId)
-        : null;
-      const byName = inventory.find((item) => String(item.productName || "").trim().toLowerCase() === String(line.productName || "").trim().toLowerCase());
-      const stock = byId || byName;
+      const stock = findStockByProduct(inventory, line);
       if (!stock) {
         return res.status(400).json({ error: `Inventario no encontrado para ${line.productName}.` });
       }
