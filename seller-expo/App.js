@@ -1,6 +1,6 @@
-﻿import React, { useMemo, useState } from "react";
-import { View, Text, ScrollView, TextInput, Pressable, StyleSheet, Alert, RefreshControl, Image, Modal } from "react-native";
-import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
+import React, { useMemo, useState } from "react";
+import { View, Text, ScrollView, TextInput, Pressable, StyleSheet, Alert, RefreshControl, Image, Modal, KeyboardAvoidingView, Platform } from "react-native";
+import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import DateTimePicker from "@react-native-community/datetimepicker";
 
@@ -10,6 +10,8 @@ const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 const digits = (v) => String(v || "").replace(/\D/g, "");
 const availabilitySourceLabel = (source) => (String(source || "").toLowerCase() === "conteo" ? "conteo" : "estimado");
 const LOGO = require("./assets/logo-platanito.jpg");
+TextInput.defaultProps = TextInput.defaultProps || {};
+TextInput.defaultProps.placeholderTextColor = "#8f816f";
 function computeAvailabilityFromVisits(visits, clientId) {
   const timeline = (Array.isArray(visits) ? visits : [])
     .filter((visit) => String(visit.clientId || "") === String(clientId || ""))
@@ -63,9 +65,11 @@ export default function App() {
 }
 
 function MainApp() {
+  const insets = useSafeAreaInsets();
   const [token, setToken] = useState("");
   const [tab, setTab] = useState("resumen");
   const [loading, setLoading] = useState(false);
+  const [savingClient, setSavingClient] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
 
@@ -78,6 +82,7 @@ function MainApp() {
     visitsHistory: [],
     stock: [],
     products: [],
+    clientMovements: [],
     paymentsByMethod: {},
     productGoals: [],
     productGoalProgress: []
@@ -96,15 +101,28 @@ function MainApp() {
     addressCity: "",
     addressState: "",
     location: "",
-    type: "bodega",
+    type: "",
     phone: "",
     email: "",
+    cpf: "",
     cnpj: "",
     ie: "",
     observations: ""
   });
 
-  const [visitForm, setVisitForm] = useState({ date: today(), clientId: "", amountCollected: "", collectionMethod: "efectivo", saleType: "consignado", boletoDays: 7, nextVisitDate: "", notes: "" });
+  const [visitForm, setVisitForm] = useState({
+    date: today(),
+    clientId: "",
+    prospectTradeName: "",
+    prospectBuyerName: "",
+    prospectPhone: "",
+    amountCollected: "",
+    collectionMethod: "efectivo",
+    saleType: "consignado",
+    boletoDays: 7,
+    nextVisitDate: "",
+    notes: ""
+  });
   const [visitClientQuery, setVisitClientQuery] = useState("");
   const [showVisitClientSuggestions, setShowVisitClientSuggestions] = useState(false);
   const [showVisitFormModal, setShowVisitFormModal] = useState(false);
@@ -120,6 +138,18 @@ function MainApp() {
   const [showApptDatePicker, setShowApptDatePicker] = useState(false);
   const [showVisitDatePicker, setShowVisitDatePicker] = useState(false);
   const [showVisitNextDatePicker, setShowVisitNextDatePicker] = useState(false);
+  const [showMovementDatePicker, setShowMovementDatePicker] = useState(false);
+  const [showPin, setShowPin] = useState(false);
+  const [activeMovementClientId, setActiveMovementClientId] = useState("");
+  const [savingMovement, setSavingMovement] = useState(false);
+  const [clientMovementForm, setClientMovementForm] = useState({
+    date: today(),
+    type: "ajuste",
+    productId: "",
+    productName: "",
+    quantity: "",
+    notes: ""
+  });
 
   const productOptions = useMemo(
     () => [...(data.products || [])].sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "es", { sensitivity: "base" })),
@@ -133,8 +163,9 @@ function MainApp() {
       const name = String(c.tradeName || c.name || "").toLowerCase();
       const buyer = String(c.buyerName || c.contact || "").toLowerCase();
       const cnpj = String(c.cnpj || "").toLowerCase();
+      const cpf = String(c.cpf || "").toLowerCase();
       const cep = String(c.cep || "").toLowerCase();
-      return name.includes(q) || buyer.includes(q) || cnpj.includes(q) || cep.includes(q);
+      return name.includes(q) || buyer.includes(q) || cnpj.includes(q) || cpf.includes(q) || cep.includes(q);
     });
   }, [clientFilter, data.clients]);
 
@@ -177,6 +208,19 @@ function MainApp() {
     () => (data.visitsHistory || []).find((v) => v.id === selectedVisitId) || null,
     [data.visitsHistory, selectedVisitId]
   );
+  const clientMovementsByClient = useMemo(() => {
+    const map = new Map();
+    for (const movement of data.clientMovements || []) {
+      const key = String(movement.clientId || "");
+      if (!map.has(key)) map.set(key, []);
+      map.get(key).push(movement);
+    }
+    for (const [key, list] of map.entries()) {
+      list.sort((a, b) => new Date(`${b.date}T00:00:00`) - new Date(`${a.date}T00:00:00`));
+      map.set(key, list);
+    }
+    return map;
+  }, [data.clientMovements]);
 
   async function apiGetAuth(path) {
     const r = await fetch(`${API_BASE}${path}`, { headers: { Authorization: `Bearer ${token}` } });
@@ -246,8 +290,40 @@ function MainApp() {
       await fetch(`${API_BASE}/seller-auth/logout`, { method: "POST", headers: { Authorization: `Bearer ${token}` } });
     } catch {}
     setToken("");
-    setData({ seller: null, summary: {}, clients: [], agendaWeek: [], visitsHistory: [], stock: [], products: [], paymentsByMethod: {}, productGoals: [], productGoalProgress: [] });
+    setData({ seller: null, summary: {}, clients: [], agendaWeek: [], visitsHistory: [], stock: [], products: [], clientMovements: [], paymentsByMethod: {}, productGoals: [], productGoalProgress: [] });
     setVisitItems([]);
+  }
+
+  function onChangeMovementDate(_event, selectedDate) {
+    setShowMovementDatePicker(false);
+    if (!selectedDate) return;
+    setClientMovementForm((p) => ({ ...p, date: selectedDate.toISOString().slice(0, 10) }));
+  }
+
+  async function saveClientMovement(client) {
+    if (!client?.id) return;
+    if (savingMovement) return;
+    if (!String(clientMovementForm.productName || "").trim()) return Alert.alert("Error", "Producto obligatorio");
+    if (num(clientMovementForm.quantity) <= 0) return Alert.alert("Error", "Cantidad debe ser mayor a 0");
+    try {
+      setSavingMovement(true);
+      await apiPostAuth(`/seller-app/clients/${client.id}/movements`, {
+        date: clientMovementForm.date || today(),
+        type: clientMovementForm.type || "ajuste",
+        productId: clientMovementForm.productId || "",
+        productName: String(clientMovementForm.productName || "").trim(),
+        quantity: num(clientMovementForm.quantity),
+        notes: String(clientMovementForm.notes || "").trim()
+      });
+      setClientMovementForm({ date: today(), type: "ajuste", productId: "", productName: "", quantity: "", notes: "" });
+      setActiveMovementClientId("");
+      await loadSellerData();
+      Alert.alert("Listo", "Cambio registrado");
+    } catch (e) {
+      Alert.alert("Error", e.message || "No se pudo registrar cambio");
+    } finally {
+      setSavingMovement(false);
+    }
   }
 
   async function saveProductGoal() {
@@ -267,21 +343,30 @@ function MainApp() {
     }
   }
 
+  function updateClientForm(upd) {
+    setClientForm((prev) => {
+      const next = { ...prev, ...upd };
+      next.location = [next.addressStreet, next.addressNumber, next.addressNeighborhood, next.addressCity, next.addressState]
+        .filter(Boolean)
+        .join(", ");
+      return next;
+    });
+  }
+
   async function lookupCep() {
     const cep = digits(clientForm.cep);
     if (cep.length !== 8) return Alert.alert("Error", "CEP invalido (8 digitos)");
     try {
       const d = await apiGet(`/lookup/cep/${cep}`);
       const location = [d.street, d.neighborhood, d.city, d.state].filter(Boolean).join(", ");
-      setClientForm((p) => ({
-        ...p,
+      updateClientForm({
         cep,
-        addressStreet: d.street || "",
-        addressNeighborhood: d.neighborhood || "",
-        addressCity: d.city || "",
-        addressState: d.state || "",
-        location: location || p.location
-      }));
+        addressStreet: d.street || clientForm.addressStreet,
+        addressNeighborhood: d.neighborhood || clientForm.addressNeighborhood,
+        addressCity: d.city || clientForm.addressCity,
+        addressState: d.state || clientForm.addressState,
+        location: location || clientForm.location
+      });
     } catch (e) {
       Alert.alert("Error", e.message || "No fue posible consultar CEP");
     }
@@ -293,44 +378,48 @@ function MainApp() {
     try {
       const d = await apiGet(`/lookup/cnpj/${cnpj}`);
       const location = [d.street, d.number, d.neighborhood, d.city, d.state].filter(Boolean).join(", ");
-      setClientForm((p) => ({
-        ...p,
+      updateClientForm({
         cnpj,
-        tradeName: d.tradeName || p.tradeName,
-        email: d.email || p.email,
-        phone: d.phone || p.phone,
-        ie: d.ie || p.ie,
-        cep: d.cep || p.cep,
-        addressStreet: d.street || p.addressStreet,
-        addressNumber: d.number || p.addressNumber,
-        addressNeighborhood: d.neighborhood || p.addressNeighborhood,
-        addressCity: d.city || p.addressCity,
-        addressState: d.state || p.addressState,
-        location: location || p.location
-      }));
+        tradeName: d.tradeName || clientForm.tradeName,
+        email: d.email || clientForm.email,
+        phone: d.phone || clientForm.phone,
+        ie: d.ie || clientForm.ie,
+        cep: d.cep || clientForm.cep,
+        addressStreet: d.street || clientForm.addressStreet,
+        addressNumber: d.number || clientForm.addressNumber,
+        addressNeighborhood: d.neighborhood || clientForm.addressNeighborhood,
+        addressCity: d.city || clientForm.addressCity,
+        addressState: d.state || clientForm.addressState,
+        location: location || clientForm.location
+      });
     } catch (e) {
       Alert.alert("Error", e.message || "No fue posible consultar CNPJ");
     }
   }
 
   async function createClient() {
+    if (savingClient) return;
     if (!clientForm.tradeName.trim()) return Alert.alert("Error", "Nombre comercio obligatorio");
     try {
+      setSavingClient(true);
       await apiPostAuth("/seller-app/clients", clientForm);
-      setClientForm({ tradeName: "", buyerName: "", cep: "", addressStreet: "", addressNumber: "", addressNeighborhood: "", addressCity: "", addressState: "", location: "", type: "bodega", phone: "", email: "", cnpj: "", ie: "", observations: "" });
+      setClientForm({ tradeName: "", buyerName: "", cep: "", addressStreet: "", addressNumber: "", addressNeighborhood: "", addressCity: "", addressState: "", location: "", type: "", phone: "", email: "", cpf: "", cnpj: "", ie: "", observations: "" });
+      setShowClientForm(false);
       await loadSellerData();
       Alert.alert("Listo", "Cliente creado y asignado");
     } catch (e) {
       Alert.alert("Error", e.message || "No se pudo crear cliente");
+    } finally {
+      setSavingClient(false);
     }
   }
 
   function addVisitItem() {
     if (!itemDraft.productName.trim()) return Alert.alert("Error", "Producto obligatorio");
-    if (String(itemDraft.remaining).trim() === "") return Alert.alert("Error", "Restante obligatorio");
+    if (visitEntryType !== "degustacion" && String(itemDraft.remaining).trim() === "") return Alert.alert("Error", "Restante obligatorio");
     if (visitEntryType !== "count_only" && String(itemDraft.quantity).trim() === "") return Alert.alert("Error", "Cantidad obligatoria");
     const quantity = visitEntryType === "count_only" ? 0 : num(itemDraft.quantity);
-    const unitPrice = visitEntryType === "count_only" ? 0 : num(itemDraft.unitPrice);
+    const unitPrice = visitEntryType === "dispatch" ? num(itemDraft.unitPrice) : 0;
     const line = {
       id: `${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
       productId: itemDraft.productId || "",
@@ -338,35 +427,55 @@ function MainApp() {
       quantity,
       unitPrice,
       total: quantity * unitPrice,
-      remaining: num(itemDraft.remaining)
+      remaining: visitEntryType === "degustacion" ? null : num(itemDraft.remaining)
     };
     setVisitItems((p) => [...p, line]);
     setItemDraft({ productId: "", productName: "", quantity: "", unitPrice: "", remaining: "" });
   }
 
   async function saveVisit() {
-    if (!visitForm.clientId) return Alert.alert("Error", "Cliente obligatorio");
+    const isDegustation = visitEntryType === "degustacion";
+    if (!isDegustation && !visitForm.clientId) return Alert.alert("Error", "Cliente obligatorio");
+    if (isDegustation && !visitForm.clientId && !String(visitForm.prospectTradeName || "").trim()) {
+      return Alert.alert("Error", "En degustacion debes seleccionar cliente o indicar comercio prospecto.");
+    }
     if (!visitForm.date) return Alert.alert("Error", "Fecha obligatoria");
-    if (String(visitForm.amountCollected).trim() === "") return Alert.alert("Error", "Monto cobrado obligatorio (usa 0)");
+    if (!isDegustation && String(visitForm.amountCollected).trim() === "") return Alert.alert("Error", "Monto cobrado obligatorio (usa 0)");
     if (visitItems.length === 0) return Alert.alert("Error", visitEntryType === "count_only" ? "Agrega al menos un producto para conteo" : "Agrega al menos un producto");
     if (visitEntryType === "count_only" && visitForm.saleType === "consignado") return Alert.alert("Error", "En visita solo conteo, usa A vista o Boleto.");
     try {
+      const saleType = isDegustation ? "degustacion" : visitForm.saleType;
       await apiPostAuth("/seller-app/visits", {
         ...visitForm,
         visitType: visitEntryType,
         collectionMethod:
-          visitForm.saleType === "boleto"
+          isDegustation
+            ? ""
+            : visitForm.saleType === "boleto"
             ? "boleto"
             : visitForm.saleType === "consignado"
               ? ""
               : visitForm.collectionMethod || "efectivo",
-        amountCollected: num(visitForm.amountCollected),
-        paymentType: visitForm.saleType === "a_vista" ? "contado" : "consignado",
+        amountCollected: isDegustation ? 0 : num(visitForm.amountCollected),
+        saleType,
+        paymentType: isDegustation ? "degustacion" : visitForm.saleType === "a_vista" ? "contado" : "consignado",
         items: visitItems,
         delivered: visitEntryType === "count_only" ? 0 : visitItems.reduce((acc, i) => acc + num(i.quantity), 0),
         remaining: 0
       });
-      setVisitForm({ date: today(), clientId: "", amountCollected: "", collectionMethod: "efectivo", saleType: "consignado", boletoDays: 7, nextVisitDate: "", notes: "" });
+      setVisitForm({
+        date: today(),
+        clientId: "",
+        prospectTradeName: "",
+        prospectBuyerName: "",
+        prospectPhone: "",
+        amountCollected: "",
+        collectionMethod: "efectivo",
+        saleType: "consignado",
+        boletoDays: 7,
+        nextVisitDate: "",
+        notes: ""
+      });
       setVisitClientQuery("");
       setShowVisitClientSuggestions(false);
       setVisitItems([]);
@@ -425,10 +534,14 @@ function MainApp() {
   function openVisitModalWithType(type) {
     setVisitEntryType(type);
     if (type === "count_only") {
-      setVisitForm((p) => ({ ...p, saleType: "a_vista", collectionMethod: "efectivo" }));
+      setVisitForm((p) => ({ ...p, saleType: "a_vista", collectionMethod: "efectivo", boletoDays: 7, prospectTradeName: "", prospectBuyerName: "", prospectPhone: "" }));
+    } else if (type === "degustacion") {
+      setVisitForm((p) => ({ ...p, saleType: "degustacion", collectionMethod: "", amountCollected: "0", boletoDays: 0, prospectTradeName: "", prospectBuyerName: "", prospectPhone: "" }));
     } else {
-      setVisitForm((p) => ({ ...p, saleType: "consignado", collectionMethod: "" }));
+      setVisitForm((p) => ({ ...p, saleType: "consignado", collectionMethod: "", boletoDays: 7, prospectTradeName: "", prospectBuyerName: "", prospectPhone: "" }));
     }
+    setVisitItems([]);
+    setItemDraft({ productId: "", productName: "", quantity: "", unitPrice: "", remaining: "" });
     setShowVisitTypeMenu(false);
     setShowVisitFormModal(true);
   }
@@ -437,17 +550,22 @@ function MainApp() {
     return (
       <SafeAreaView style={styles.safe} edges={["top", "bottom"]}>
         <StatusBar style="dark" />
-        <View style={styles.wrap}>
-          <View style={styles.card}>
-            <Text style={styles.h}>App Vendedor</Text>
-            <Text style={styles.s}>VeDistribuidora</Text>
-            <TextInput style={styles.i} placeholder="Usuario" value={loginForm.username} onChangeText={(t) => setLoginForm((p) => ({ ...p, username: t }))} autoCapitalize="none" />
-            <TextInput style={styles.i} placeholder="PIN" value={loginForm.pin} onChangeText={(t) => setLoginForm((p) => ({ ...p, pin: t }))} secureTextEntry keyboardType="numeric" />
-            {error ? <Text style={styles.err}>{error}</Text> : null}
-            <Pressable style={styles.btn} onPress={login} disabled={loading}><Text style={styles.btnT}>{loading ? "Entrando..." : "Entrar"}</Text></Pressable>
-            <Text style={styles.s}>Demo inicial: `edwin` / `1234`</Text>
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : "height"} keyboardVerticalOffset={Platform.OS === "ios" ? 12 : 0}>
+          <View style={styles.wrap}>
+            <View style={styles.card}>
+              <Text style={styles.h}>App Vendedor</Text>
+              <Text style={styles.s}>VeDistribuidora</Text>
+              <TextInput style={styles.i} placeholderTextColor="#8f816f" placeholder="Usuario" value={loginForm.username} onChangeText={(t) => setLoginForm((p) => ({ ...p, username: t }))} autoCapitalize="none" />
+              <View style={styles.pinRow}>
+                <TextInput style={[styles.i, styles.pinInput]} placeholderTextColor="#8f816f" placeholder="PIN" value={loginForm.pin} onChangeText={(t) => setLoginForm((p) => ({ ...p, pin: t }))} secureTextEntry={!showPin} keyboardType="numeric" />
+                <Pressable style={styles.pinToggle} onPress={() => setShowPin((p) => !p)}><Text style={styles.copyT}>{showPin ? "Ocultar" : "Ver"}</Text></Pressable>
+              </View>
+              {error ? <Text style={styles.err}>{error}</Text> : null}
+              <Pressable style={styles.btn} onPress={login} disabled={loading}><Text style={styles.btnT}>{loading ? "Entrando..." : "Entrar"}</Text></Pressable>
+              <Text style={styles.s}>Demo inicial: `edwin` / `1234`</Text>
+            </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </SafeAreaView>
     );
   }
@@ -455,10 +573,12 @@ function MainApp() {
   return (
     <SafeAreaView style={styles.safe} edges={["top", "bottom"]}>
       <StatusBar style="dark" />
-      <ScrollView
-        contentContainerStyle={styles.wrap}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#d96d20" />}
-      >
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : "height"} keyboardVerticalOffset={Platform.OS === "ios" ? 12 : 0}>
+        <ScrollView
+          contentContainerStyle={styles.wrap}
+          keyboardShouldPersistTaps="handled"
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#d96d20" />}
+        >
         <View style={styles.card}>
           <View style={styles.heroLogoWrap}>
             <Image source={LOGO} style={styles.heroLogo} resizeMode="contain" />
@@ -467,7 +587,6 @@ function MainApp() {
           <Text style={styles.s}>Ventas semana: {num(data.summary?.weekSales).toFixed(2)} | Mes: {num(data.summary?.monthSales).toFixed(2)}</Text>
           <Text style={styles.s}>Comision mes: {num(data.summary?.commissionAmount).toFixed(2)} | Deuda cartera: {num(data.summary?.totalDebt).toFixed(2)}</Text>
           <View style={styles.rowBtns}>
-            <Pressable style={styles.copy} onPress={() => loadSellerData()}><Text style={styles.copyT}>Actualizar</Text></Pressable>
             <Pressable style={styles.copy} onPress={logout}><Text style={styles.copyT}>Salir</Text></Pressable>
           </View>
         </View>
@@ -479,9 +598,9 @@ function MainApp() {
         {tab === "resumen" && (
           <View style={styles.card}>
             <Text style={styles.t}>Meta por producto</Text>
-            <TextInput style={styles.i} placeholder="Producto" value={productGoalForm.productName} onChangeText={(t) => setProductGoalForm((p) => ({ ...p, productName: t, productId: "" }))} />
+            <TextInput style={styles.i} placeholderTextColor="#8f816f" placeholder="Producto" value={productGoalForm.productName} onChangeText={(t) => setProductGoalForm((p) => ({ ...p, productName: t, productId: "" }))} />
             <View style={styles.rowBtns}>{productOptions.slice(0, 8).map((p) => <Pressable key={p.id} style={styles.quick} onPress={() => setProductGoalForm((d) => ({ ...d, productId: p.id, productName: p.name }))}><Text style={styles.quickT}>{p.name}</Text></Pressable>)}</View>
-            <TextInput style={styles.i} placeholder="Cantidad objetivo semanal (unid)" value={productGoalForm.targetQty} onChangeText={(t) => setProductGoalForm((p) => ({ ...p, targetQty: t }))} keyboardType="decimal-pad" />
+            <TextInput style={styles.i} placeholderTextColor="#8f816f" placeholder="Cantidad objetivo semanal (unid)" value={productGoalForm.targetQty} onChangeText={(t) => setProductGoalForm((p) => ({ ...p, targetQty: t }))} keyboardType="decimal-pad" />
             <Pressable style={styles.btn} onPress={saveProductGoal}><Text style={styles.btnT}>Guardar meta de producto</Text></Pressable>
 
             <Text style={styles.t}>Progreso semanal</Text>
@@ -500,21 +619,102 @@ function MainApp() {
           <>
             <View style={styles.card}>
               <Text style={styles.t}>Mi cartera</Text>
-              <TextInput style={styles.i} placeholder="Buscar por nombre, CNPJ o CEP" value={clientFilter} onChangeText={setClientFilter} />
+              <TextInput style={styles.i} placeholderTextColor="#8f816f" placeholder="Buscar por nombre, CPF/CNPJ o CEP" value={clientFilter} onChangeText={setClientFilter} />
               {filteredClients.map((c) => {
                 const availability = Array.isArray(c.productAvailability) && c.productAvailability.length > 0
                   ? c.productAvailability
                   : computeAvailabilityFromVisits(data.visitsHistory || [], c.id);
+                const movementOpen = activeMovementClientId === c.id;
+                const movements = clientMovementsByClient.get(String(c.id)) || [];
                 return (
                 <View key={c.id} style={styles.item}>
                   <Text style={styles.itemT}>{c.tradeName}</Text>
                   <Text style={styles.s}>{c.internalId || c.id} | Deuda: {num(c.debt).toFixed(2)}</Text>
-                  <Text style={styles.s}>CNPJ: {c.cnpj || "-"} | CEP: {c.cep || "-"}</Text>
+                  <Text style={styles.s}>CPF: {c.cpf || "-"} | CNPJ: {c.cnpj || "-"} | CEP: {c.cep || "-"}</Text>
                   {availability.map((item, idx) => (
                     <Text key={`${c.id}_pa_${idx}`} style={styles.s}>
                       Disponible {item.productName}: {num(item.availableQty).toFixed(2)} unid ({availabilitySourceLabel(item.source)})
                     </Text>
                   ))}
+                  <View style={styles.rowBtns}>
+                    <Pressable
+                      style={styles.copy}
+                      onPress={() => {
+                        if (movementOpen) {
+                          setActiveMovementClientId("");
+                          return;
+                        }
+                        setActiveMovementClientId(c.id);
+                        setClientMovementForm({ date: today(), type: "ajuste", productId: "", productName: "", quantity: "", notes: "" });
+                      }}
+                    >
+                      <Text style={styles.copyT}>{movementOpen ? "Cerrar cambio" : "Registrar cambio"}</Text>
+                    </Pressable>
+                  </View>
+                  {movementOpen ? (
+                    <View style={[styles.card, { marginTop: 8 }]}>
+                      <Text style={styles.t}>Cambio del cliente</Text>
+                      <Pressable style={styles.i} onPress={() => setShowMovementDatePicker(true)}>
+                        <Text style={styles.datePickerText}>{clientMovementForm.date ? `Fecha: ${clientMovementForm.date}` : "Seleccionar fecha"}</Text>
+                      </Pressable>
+                      {showMovementDatePicker && (
+                        <DateTimePicker
+                          value={clientMovementForm.date ? new Date(`${clientMovementForm.date}T00:00:00`) : new Date()}
+                          mode="date"
+                          display="default"
+                          onChange={onChangeMovementDate}
+                        />
+                      )}
+                      <View style={styles.tabs}>
+                        {[["vencido", "Vencido"], ["danado", "Danado"], ["devolucion", "Devolucion"], ["ajuste", "Ajuste"], ["otro", "Otro"]].map(([id, label]) => (
+                          <Pressable key={id} style={[styles.tab, clientMovementForm.type === id && styles.tabA]} onPress={() => setClientMovementForm((p) => ({ ...p, type: id }))}>
+                            <Text style={[styles.tabT, clientMovementForm.type === id && styles.tabTA]}>{label}</Text>
+                          </Pressable>
+                        ))}
+                      </View>
+                      <TextInput
+                        style={styles.i}
+                        placeholderTextColor="#8f816f"
+                        placeholder="Producto"
+                        value={clientMovementForm.productName}
+                        onChangeText={(t) => setClientMovementForm((p) => ({ ...p, productName: t, productId: "" }))}
+                      />
+                      <View style={styles.rowBtns}>
+                        {productOptions.slice(0, 6).map((p) => (
+                          <Pressable key={`mov_${c.id}_${p.id}`} style={styles.quick} onPress={() => setClientMovementForm((d) => ({ ...d, productId: p.id, productName: p.name }))}>
+                            <Text style={styles.quickT}>{p.name}</Text>
+                          </Pressable>
+                        ))}
+                      </View>
+                      <TextInput
+                        style={styles.i}
+                        placeholderTextColor="#8f816f"
+                        placeholder="Cantidad (unid)"
+                        value={clientMovementForm.quantity}
+                        onChangeText={(t) => setClientMovementForm((p) => ({ ...p, quantity: t }))}
+                        keyboardType="decimal-pad"
+                      />
+                      <TextInput
+                        style={styles.i}
+                        placeholderTextColor="#8f816f"
+                        placeholder="Motivo / nota"
+                        value={clientMovementForm.notes}
+                        onChangeText={(t) => setClientMovementForm((p) => ({ ...p, notes: t }))}
+                      />
+                      <Pressable style={[styles.btn, savingMovement && styles.btnDisabled]} onPress={() => saveClientMovement(c)} disabled={savingMovement}>
+                        <Text style={styles.btnT}>{savingMovement ? "Guardando..." : "Guardar cambio"}</Text>
+                      </Pressable>
+                      <Text style={styles.t}>Historial de cambios</Text>
+                      {movements.slice(0, 8).map((movement) => (
+                        <View key={movement.id} style={styles.item}>
+                          <Text style={styles.itemT}>{movement.date} | {String(movement.type || "").toUpperCase()}</Text>
+                          <Text style={styles.s}>{movement.productName} - {num(movement.quantity).toFixed(2)} unid</Text>
+                          {movement.notes ? <Text style={styles.s}>{movement.notes}</Text> : null}
+                        </View>
+                      ))}
+                      {movements.length === 0 ? <Text style={styles.s}>Sin cambios registrados.</Text> : null}
+                    </View>
+                  ) : null}
                 </View>
               );})}
               {filteredClients.length === 0 ? <Text style={styles.s}>Sin clientes con ese filtro.</Text> : null}
@@ -522,19 +722,25 @@ function MainApp() {
             {showClientForm && (
               <View style={styles.card}>
                 <Text style={styles.t}>Registrar cliente</Text>
-                <TextInput style={styles.i} placeholder="Nombre comercio" value={clientForm.tradeName} onChangeText={(t) => setClientForm((p) => ({ ...p, tradeName: t }))} />
-                <TextInput style={styles.i} placeholder="Responsable compras" value={clientForm.buyerName} onChangeText={(t) => setClientForm((p) => ({ ...p, buyerName: t }))} />
-                <TextInput style={styles.i} placeholder="CEP" value={clientForm.cep} onChangeText={(t) => setClientForm((p) => ({ ...p, cep: t }))} keyboardType="numeric" />
-                <Pressable style={styles.copy} onPress={lookupCep}><Text style={styles.copyT}>Buscar CEP</Text></Pressable>
-                <TextInput style={styles.i} placeholder="CNPJ" value={clientForm.cnpj} onChangeText={(t) => setClientForm((p) => ({ ...p, cnpj: t }))} keyboardType="numeric" />
+                <TextInput style={styles.i} placeholderTextColor="#8f816f" placeholder="Nombre comercio" value={clientForm.tradeName} onChangeText={(t) => updateClientForm({ tradeName: t })} />
+                <TextInput style={styles.i} placeholderTextColor="#8f816f" placeholder="Responsable compras" value={clientForm.buyerName} onChangeText={(t) => updateClientForm({ buyerName: t })} />
+                <TextInput style={styles.i} placeholderTextColor="#8f816f" placeholder="CPF" value={clientForm.cpf} onChangeText={(t) => updateClientForm({ cpf: t })} keyboardType="numeric" />
+                <TextInput style={styles.i} placeholderTextColor="#8f816f" placeholder="CNPJ" value={clientForm.cnpj} onChangeText={(t) => updateClientForm({ cnpj: t })} keyboardType="numeric" />
                 <Pressable style={styles.copy} onPress={lookupCnpj}><Text style={styles.copyT}>Buscar CNPJ</Text></Pressable>
-                <TextInput style={styles.i} placeholder="Ubicacion" value={clientForm.location} onChangeText={(t) => setClientForm((p) => ({ ...p, location: t }))} />
-                <TextInput style={styles.i} placeholder="Tipo comercio" value={clientForm.type} onChangeText={(t) => setClientForm((p) => ({ ...p, type: t }))} />
-                <TextInput style={styles.i} placeholder="Telefono" value={clientForm.phone} onChangeText={(t) => setClientForm((p) => ({ ...p, phone: t }))} />
-                <TextInput style={styles.i} placeholder="Correo" value={clientForm.email} onChangeText={(t) => setClientForm((p) => ({ ...p, email: t }))} />
-                <TextInput style={styles.i} placeholder="IE" value={clientForm.ie} onChangeText={(t) => setClientForm((p) => ({ ...p, ie: t }))} />
-                <TextInput style={styles.i} placeholder="Observaciones" value={clientForm.observations} onChangeText={(t) => setClientForm((p) => ({ ...p, observations: t }))} />
-                <Pressable style={styles.btn} onPress={createClient}><Text style={styles.btnT}>Guardar cliente</Text></Pressable>
+                <TextInput style={styles.i} placeholderTextColor="#8f816f" placeholder="CEP" value={clientForm.cep} onChangeText={(t) => updateClientForm({ cep: t })} keyboardType="numeric" />
+                <Pressable style={styles.copy} onPress={lookupCep}><Text style={styles.copyT}>Buscar CEP</Text></Pressable>
+                <TextInput style={styles.i} placeholderTextColor="#8f816f" placeholder="Calle" value={clientForm.addressStreet} onChangeText={(t) => updateClientForm({ addressStreet: t })} />
+                <TextInput style={styles.i} placeholderTextColor="#8f816f" placeholder="Numero predio" value={clientForm.addressNumber} onChangeText={(t) => updateClientForm({ addressNumber: t })} />
+                <TextInput style={styles.i} placeholderTextColor="#8f816f" placeholder="Barrio" value={clientForm.addressNeighborhood} onChangeText={(t) => updateClientForm({ addressNeighborhood: t })} />
+                <TextInput style={styles.i} placeholderTextColor="#8f816f" placeholder="Ciudad" value={clientForm.addressCity} onChangeText={(t) => updateClientForm({ addressCity: t })} />
+                <TextInput style={styles.i} placeholderTextColor="#8f816f" placeholder="Estado" value={clientForm.addressState} onChangeText={(t) => updateClientForm({ addressState: t })} />
+                <TextInput style={styles.i} placeholderTextColor="#8f816f" placeholder="Ubicacion" value={clientForm.location} onChangeText={(t) => updateClientForm({ location: t })} />
+                <TextInput style={styles.i} placeholderTextColor="#8f816f" placeholder="Tipo comercio" value={clientForm.type} onChangeText={(t) => updateClientForm({ type: t })} />
+                <TextInput style={styles.i} placeholderTextColor="#8f816f" placeholder="Telefono" value={clientForm.phone} onChangeText={(t) => updateClientForm({ phone: t })} />
+                <TextInput style={styles.i} placeholderTextColor="#8f816f" placeholder="Correo" value={clientForm.email} onChangeText={(t) => updateClientForm({ email: t })} />
+                <TextInput style={styles.i} placeholderTextColor="#8f816f" placeholder="IE" value={clientForm.ie} onChangeText={(t) => updateClientForm({ ie: t })} />
+                <TextInput style={styles.i} placeholderTextColor="#8f816f" placeholder="Observaciones" value={clientForm.observations} onChangeText={(t) => updateClientForm({ observations: t })} />
+                <Pressable style={[styles.btn, savingClient && styles.btnDisabled]} onPress={createClient} disabled={savingClient}><Text style={styles.btnT}>{savingClient ? "Guardando..." : "Guardar cliente"}</Text></Pressable>
               </View>
             )}
           </>
@@ -571,7 +777,7 @@ function MainApp() {
                 <Text style={styles.copyT}>Volver a visitas</Text>
               </Pressable>
               <Text style={styles.t}>Detalle de visita</Text>
-              <Text style={styles.s}>Cliente: {selectedVisit.clientName || "-"}</Text>
+              <Text style={styles.s}>Cliente: {selectedVisit.clientName || selectedVisit.prospectTradeName || "Prospecto"}</Text>
               <Text style={styles.s}>Fecha: {selectedVisit.date || "-"}</Text>
               <Text style={styles.s}>Tipo venta: {selectedVisit.saleType || selectedVisit.paymentType || "-"}</Text>
               <Text style={styles.s}>Forma cobro: {selectedVisit.collectionMethod || "-"}</Text>
@@ -604,14 +810,22 @@ function MainApp() {
             {(data.stock || []).length === 0 ? <Text style={styles.s}>Sin stock cargado por admin.</Text> : null}
           </View>
         )}
-      </ScrollView>
+        </ScrollView>
+      </KeyboardAvoidingView>
       {showVisitFormModal && (
         <Modal transparent visible={showVisitFormModal} animationType="fade" onRequestClose={() => setShowVisitFormModal(false)}>
           <View style={styles.modalBackdrop}>
             <View style={styles.modalCard}>
-              <ScrollView contentContainerStyle={{ paddingBottom: 8 }}>
-                <Text style={styles.t}>{visitEntryType === "count_only" ? "Registrar visita (solo conteo)" : "Registrar visita (con despacho)"}</Text>
+              <ScrollView contentContainerStyle={{ paddingBottom: 8 }} keyboardShouldPersistTaps="handled">
+                <Text style={styles.t}>
+                  {visitEntryType === "count_only"
+                    ? "Registrar visita (solo conteo)"
+                    : visitEntryType === "degustacion"
+                      ? "Registrar degustacion"
+                      : "Registrar visita (con despacho)"}
+                </Text>
                 {visitEntryType === "count_only" ? <Text style={styles.s}>Modo conteo: no descuenta stock, solo registra mercancia disponible.</Text> : null}
+                {visitEntryType === "degustacion" ? <Text style={styles.s}>Degustacion: descuenta stock, no genera deuda ni cobro.</Text> : null}
                 <Pressable style={styles.i} onPress={() => setShowVisitDatePicker(true)}>
                   <Text style={styles.datePickerText}>{visitForm.date ? `Fecha: ${visitForm.date}` : "Seleccionar fecha (calendario)"}</Text>
                 </Pressable>
@@ -626,7 +840,7 @@ function MainApp() {
                 <View style={styles.selectorShell}>
                   <TextInput
                     style={styles.selectorInput}
-                    placeholder="Buscar cliente (ID / comercio / responsable)"
+                    placeholderTextColor="#8f816f" placeholder={visitEntryType === "degustacion" ? "Buscar cliente (opcional)" : "Buscar cliente (ID / comercio / responsable)"}
                     value={visitClientQuery}
                     onChangeText={(t) => {
                       setVisitClientQuery(t);
@@ -638,7 +852,7 @@ function MainApp() {
                     <Text style={styles.selectorBtnTxt}>X</Text>
                   </Pressable>
                   <Pressable style={styles.selectorBtn} onPress={() => setShowVisitClientSuggestions((p) => !p)}>
-                    <Text style={styles.selectorBtnTxt}>{showVisitClientSuggestions ? "˄" : "˅"}</Text>
+                    <Text style={styles.selectorBtnTxt}>{showVisitClientSuggestions ? "^" : "?"}</Text>
                   </Pressable>
                 </View>
                 {showVisitClientSuggestions && (
@@ -652,40 +866,57 @@ function MainApp() {
                     {filteredVisitClientOptions.length === 0 ? <Text style={styles.s}>Sin clientes con ese filtro.</Text> : null}
                   </View>
                 )}
-                <View style={styles.tabs}>
-                  {(visitEntryType === "count_only" ? [["a_vista", "A vista"], ["boleto", "Boleto"]] : [["consignado", "Consig."], ["a_vista", "A vista"], ["boleto", "Boleto"]]).map(([id, label]) => (
-                    <Pressable key={id} style={[styles.tab, visitForm.saleType === id && styles.tabA]} onPress={() => onChangeSaleType(id)}>
-                      <Text style={[styles.tabT, visitForm.saleType === id && styles.tabTA]}>{label}</Text>
-                    </Pressable>
-                  ))}
-                </View>
-                {visitForm.saleType === "a_vista" && (
-                  <View style={styles.tabs}>{[["efectivo", "Efectivo"], ["pix", "PIX"], ["transferencia", "Transfer"]].map(([id, label]) => <Pressable key={id} style={[styles.tab, visitForm.collectionMethod === id && styles.tabA]} onPress={() => setVisitForm((p) => ({ ...p, collectionMethod: id }))}><Text style={[styles.tabT, visitForm.collectionMethod === id && styles.tabTA]}>{label}</Text></Pressable>)}</View>
-                )}
-                {visitForm.saleType === "consignado" && <Text style={styles.s}>Consignado: la forma de cobro se registra cuando se recauda.</Text>}
-                {visitForm.saleType === "boleto" && (
+                {visitEntryType === "degustacion" && (
                   <>
-                    <Text style={styles.s}>Forma de cobro: boleto</Text>
+                    <TextInput style={styles.i} placeholderTextColor="#8f816f" placeholder="Nombre comercio prospecto (si no seleccionas cliente)" value={visitForm.prospectTradeName} onChangeText={(t) => setVisitForm((p) => ({ ...p, prospectTradeName: t }))} />
+                    <TextInput style={styles.i} placeholderTextColor="#8f816f" placeholder="Responsable prospecto (opcional)" value={visitForm.prospectBuyerName} onChangeText={(t) => setVisitForm((p) => ({ ...p, prospectBuyerName: t }))} />
+                    <TextInput style={styles.i} placeholderTextColor="#8f816f" placeholder="Telefono prospecto (opcional)" value={visitForm.prospectPhone} onChangeText={(t) => setVisitForm((p) => ({ ...p, prospectPhone: t }))} keyboardType="phone-pad" />
+                  </>
+                )}
+
+                {visitEntryType !== "degustacion" && (
+                  <>
                     <View style={styles.tabs}>
-                      {[7, 14].map((days) => (
-                        <Pressable key={days} style={[styles.tab, visitForm.boletoDays === days && styles.tabA]} onPress={() => setVisitForm((p) => ({ ...p, boletoDays: days }))}>
-                          <Text style={[styles.tabT, visitForm.boletoDays === days && styles.tabTA]}>{days} dias</Text>
+                      {(visitEntryType === "count_only" ? [["a_vista", "A vista"], ["boleto", "Boleto"]] : [["consignado", "Consig."], ["a_vista", "A vista"], ["boleto", "Boleto"]]).map(([id, label]) => (
+                        <Pressable key={id} style={[styles.tab, visitForm.saleType === id && styles.tabA]} onPress={() => onChangeSaleType(id)}>
+                          <Text style={[styles.tabT, visitForm.saleType === id && styles.tabTA]}>{label}</Text>
                         </Pressable>
                       ))}
                     </View>
+                    {visitForm.saleType === "a_vista" && (
+                      <View style={styles.tabs}>{[["efectivo", "Efectivo"], ["pix", "PIX"], ["transferencia", "Transfer"]].map(([id, label]) => <Pressable key={id} style={[styles.tab, visitForm.collectionMethod === id && styles.tabA]} onPress={() => setVisitForm((p) => ({ ...p, collectionMethod: id }))}><Text style={[styles.tabT, visitForm.collectionMethod === id && styles.tabTA]}>{label}</Text></Pressable>)}</View>
+                    )}
+                    {visitForm.saleType === "consignado" && <Text style={styles.s}>Consignado: la forma de cobro se registra cuando se recauda.</Text>}
+                    {visitForm.saleType === "boleto" && (
+                      <>
+                        <Text style={styles.s}>Forma de cobro: boleto</Text>
+                        <View style={styles.tabs}>
+                          {[7, 14].map((days) => (
+                            <Pressable key={days} style={[styles.tab, visitForm.boletoDays === days && styles.tabA]} onPress={() => setVisitForm((p) => ({ ...p, boletoDays: days }))}>
+                              <Text style={[styles.tabT, visitForm.boletoDays === days && styles.tabTA]}>{days} dias</Text>
+                            </Pressable>
+                          ))}
+                        </View>
+                      </>
+                    )}
+                    <TextInput style={styles.i} placeholderTextColor="#8f816f" placeholder="Monto cobrado (0 si no cobraste)" value={visitForm.amountCollected} onChangeText={(t) => setVisitForm((p) => ({ ...p, amountCollected: t }))} keyboardType="decimal-pad" />
                   </>
                 )}
-                <TextInput style={styles.i} placeholder="Monto cobrado (0 si no cobraste)" value={visitForm.amountCollected} onChangeText={(t) => setVisitForm((p) => ({ ...p, amountCollected: t }))} keyboardType="decimal-pad" />
                 <Text style={styles.t}>Producto</Text>
-                <TextInput style={styles.i} placeholder={visitEntryType === "count_only" ? "Producto para conteo" : "Producto"} value={itemDraft.productName} onChangeText={(t) => setItemDraft((p) => ({ ...p, productName: t, productId: "" }))} />
+                <TextInput style={styles.i} placeholderTextColor="#8f816f" placeholder={visitEntryType === "count_only" ? "Producto para conteo" : "Producto"} value={itemDraft.productName} onChangeText={(t) => setItemDraft((p) => ({ ...p, productName: t, productId: "" }))} />
                 <View style={styles.rowBtns}>{productOptions.slice(0, 6).map((p) => <Pressable key={p.id} style={styles.quick} onPress={() => setItemDraft((d) => ({ ...d, productId: p.id, productName: p.name, unitPrice: String(num(p.unitPrice)) }))}><Text style={styles.quickT}>{p.name}</Text></Pressable>)}</View>
-                {visitEntryType !== "count_only" && (
+                {visitEntryType === "degustacion" && (
+                  <TextInput style={styles.i} placeholderTextColor="#8f816f" placeholder="Cantidad para degustacion" value={itemDraft.quantity} onChangeText={(t) => setItemDraft((p) => ({ ...p, quantity: t }))} keyboardType="decimal-pad" />
+                )}
+                {visitEntryType === "dispatch" && (
                   <>
-                    <TextInput style={styles.i} placeholder="Cantidad" value={itemDraft.quantity} onChangeText={(t) => setItemDraft((p) => ({ ...p, quantity: t }))} keyboardType="decimal-pad" />
-                    <TextInput style={styles.i} placeholder="Valor unitario" value={itemDraft.unitPrice} onChangeText={(t) => setItemDraft((p) => ({ ...p, unitPrice: t }))} keyboardType="decimal-pad" />
+                    <TextInput style={styles.i} placeholderTextColor="#8f816f" placeholder="Cantidad" value={itemDraft.quantity} onChangeText={(t) => setItemDraft((p) => ({ ...p, quantity: t }))} keyboardType="decimal-pad" />
+                    <TextInput style={styles.i} placeholderTextColor="#8f816f" placeholder="Valor unitario" value={itemDraft.unitPrice} onChangeText={(t) => setItemDraft((p) => ({ ...p, unitPrice: t }))} keyboardType="decimal-pad" />
                   </>
                 )}
-                <TextInput style={styles.i} placeholder={visitEntryType === "count_only" ? "Cantidad disponible en cliente" : "Restante actual"} value={itemDraft.remaining} onChangeText={(t) => setItemDraft((p) => ({ ...p, remaining: t }))} keyboardType="decimal-pad" />
+                {visitEntryType !== "degustacion" && (
+                  <TextInput style={styles.i} placeholderTextColor="#8f816f" placeholder={visitEntryType === "count_only" ? "Cantidad disponible en cliente" : "Restante actual"} value={itemDraft.remaining} onChangeText={(t) => setItemDraft((p) => ({ ...p, remaining: t }))} keyboardType="decimal-pad" />
+                )}
                 <Pressable style={styles.i} onPress={() => setShowVisitNextDatePicker(true)}>
                   <Text style={styles.datePickerText}>{visitForm.nextVisitDate ? `Proxima visita: ${visitForm.nextVisitDate}` : "Seleccionar proxima visita (calendario)"}</Text>
                 </Pressable>
@@ -698,7 +929,7 @@ function MainApp() {
                   />
                 )}
                 <Pressable style={styles.copy} onPress={addVisitItem}><Text style={styles.copyT}>Agregar producto</Text></Pressable>
-                {visitItems.map((it) => <View key={it.id} style={styles.item}><Text style={styles.itemT}>{it.productName}</Text><Text style={styles.s}>{visitEntryType === "count_only" ? `Disponible ${num(it.remaining).toFixed(2)} unid` : `Cant ${num(it.quantity).toFixed(2)} | Restante ${num(it.remaining).toFixed(2)} | Total ${num(it.total).toFixed(2)}`}</Text></View>)}
+                {visitItems.map((it) => <View key={it.id} style={styles.item}><Text style={styles.itemT}>{it.productName}</Text><Text style={styles.s}>{visitEntryType === "count_only" ? `Disponible ${num(it.remaining).toFixed(2)} unid` : visitEntryType === "degustacion" ? `Degustacion ${num(it.quantity).toFixed(2)} unid` : `Cant ${num(it.quantity).toFixed(2)} | Restante ${num(it.remaining).toFixed(2)} | Total ${num(it.total).toFixed(2)}`}</Text></View>)}
                 <View style={styles.modalActions}>
                   <Pressable style={styles.copy} onPress={() => { setShowVisitFormModal(false); setVisitEntryType("dispatch"); }}><Text style={styles.copyT}>Cancelar</Text></Pressable>
                   <Pressable style={styles.btnMini} onPress={saveVisit}><Text style={styles.btnT}>Guardar visita</Text></Pressable>
@@ -717,7 +948,7 @@ function MainApp() {
               <View style={styles.selectorShell}>
                 <TextInput
                   style={styles.selectorInput}
-                  placeholder="Buscar cliente (ID / comercio / responsable)"
+                  placeholderTextColor="#8f816f" placeholder="Buscar cliente (ID / comercio / responsable)"
                   value={apptClientQuery}
                   onChangeText={(t) => {
                     setApptClientQuery(t);
@@ -729,7 +960,7 @@ function MainApp() {
                   <Text style={styles.selectorBtnTxt}>X</Text>
                 </Pressable>
                 <Pressable style={styles.selectorBtn} onPress={() => setShowApptClientSuggestions((p) => !p)}>
-                  <Text style={styles.selectorBtnTxt}>{showApptClientSuggestions ? "˄" : "˅"}</Text>
+                  <Text style={styles.selectorBtnTxt}>{showApptClientSuggestions ? "^" : "?"}</Text>
                 </Pressable>
               </View>
               {showApptClientSuggestions && (
@@ -754,7 +985,7 @@ function MainApp() {
                   onChange={onChangeApptDate}
                 />
               )}
-              <TextInput style={[styles.i, { minHeight: 80 }]} multiline placeholder="Notas" value={apptForm.notes} onChangeText={(t) => setApptForm((p) => ({ ...p, notes: t }))} />
+              <TextInput style={[styles.i, { minHeight: 80 }]} multiline placeholderTextColor="#8f816f" placeholder="Notas" value={apptForm.notes} onChangeText={(t) => setApptForm((p) => ({ ...p, notes: t }))} />
               <View style={styles.modalActions}>
                 <Pressable style={styles.copy} onPress={() => setShowAgendaFormModal(false)}><Text style={styles.copyT}>Cancelar</Text></Pressable>
                 <Pressable style={styles.btnMini} onPress={saveAppointment}><Text style={styles.btnT}>Guardar</Text></Pressable>
@@ -767,19 +998,30 @@ function MainApp() {
       {(tab === "clientes" || tab === "visitas" || tab === "agenda") && (
         <>
           {tab === "visitas" && showVisitTypeMenu && (
-            <View style={styles.fabMenu}>
+            <View style={[styles.fabMenu, { bottom: 90 + Math.max(insets.bottom, 10) }]}>
               <Pressable style={styles.fabMenuItem} onPress={() => openVisitModalWithType("dispatch")}>
                 <Text style={styles.fabMenuText}>Con despacho</Text>
               </Pressable>
               <Pressable style={styles.fabMenuItem} onPress={() => openVisitModalWithType("count_only")}>
                 <Text style={styles.fabMenuText}>Solo conteo</Text>
               </Pressable>
+              <Pressable style={styles.fabMenuItem} onPress={() => openVisitModalWithType("degustacion")}>
+                <Text style={styles.fabMenuText}>Degustacion</Text>
+              </Pressable>
             </View>
           )}
           <Pressable
-            style={styles.fab}
+            style={[styles.fab, { bottom: 24 + Math.max(insets.bottom, 10) }]}
             onPress={() => {
-              if (tab === "clientes") setShowClientForm((p) => !p);
+              if (tab === "clientes") {
+                setShowClientForm((p) => {
+                  const next = !p;
+                  if (next) {
+                    setClientForm({ tradeName: "", buyerName: "", cep: "", addressStreet: "", addressNumber: "", addressNeighborhood: "", addressCity: "", addressState: "", location: "", type: "", phone: "", email: "", cpf: "", cnpj: "", ie: "", observations: "" });
+                  }
+                  return next;
+                });
+              }
               if (tab === "visitas") setShowVisitTypeMenu((p) => !p);
               if (tab === "agenda") setShowAgendaFormModal(true);
             }}
@@ -801,7 +1043,10 @@ const styles = StyleSheet.create({
   h: { fontSize: 24, fontWeight: "800", color: "#2a221a" },
   t: { fontSize: 16, fontWeight: "800", color: "#2f251d", marginTop: 6 },
   s: { color: "#7d7266", marginTop: 3 },
-  i: { borderWidth: 1, borderColor: "#dfcfbb", borderRadius: 10, paddingHorizontal: 10, paddingVertical: 10, marginTop: 8, backgroundColor: "#fffdf9" },
+  i: { borderWidth: 1, borderColor: "#dfcfbb", borderRadius: 10, paddingHorizontal: 10, paddingVertical: 10, marginTop: 8, backgroundColor: "#fffdf9", color: "#2f251d" },
+  pinRow: { flexDirection: "row", alignItems: "flex-end", gap: 8 },
+  pinInput: { flex: 1 },
+  pinToggle: { marginTop: 8, backgroundColor: "#f1e3d2", borderRadius: 10, paddingHorizontal: 10, paddingVertical: 10, alignItems: "center", justifyContent: "center" },
   datePickerText: { color: "#2f251d", fontWeight: "600" },
   selectorShell: { marginTop: 8, minHeight: 42, borderRadius: 10, backgroundColor: "#fffdf9", borderWidth: 1, borderColor: "#dfcfbb", flexDirection: "row", alignItems: "center", paddingLeft: 10, paddingRight: 6 },
   selectorInput: { flex: 1, color: "#2f251d", fontSize: 14, fontWeight: "500", paddingVertical: 8, paddingRight: 6 },
@@ -810,6 +1055,7 @@ const styles = StyleSheet.create({
   dropdown: { marginTop: 8, borderWidth: 1, borderColor: "#dfcfbb", borderRadius: 10, backgroundColor: "#fffdf9", padding: 8, gap: 6 },
   dropdownItem: { borderWidth: 1, borderColor: "#f0dfca", borderRadius: 10, paddingVertical: 8, paddingHorizontal: 8, backgroundColor: "#fff" },
   btn: { marginTop: 12, backgroundColor: "#d96d20", paddingVertical: 12, borderRadius: 10, alignItems: "center" },
+  btnDisabled: { opacity: 0.55 },
   btnT: { color: "#fff", fontWeight: "800" },
   copy: { marginTop: 8, backgroundColor: "#f1e3d2", borderRadius: 10, paddingHorizontal: 10, paddingVertical: 8, alignItems: "center" },
   copyT: { color: "#704f2b", fontWeight: "700", fontSize: 12 },
