@@ -314,6 +314,64 @@ function normalizeProductGoal(rawGoal = {}) {
   };
 }
 
+function normalizeRawMaterial(rawMaterial = {}) {
+  return {
+    id: String(rawMaterial.id || uid("raw")).trim(),
+    name: String(rawMaterial.name || "").trim(),
+    unit: String(rawMaterial.unit || "kg").trim(),
+    stockQty: Math.max(0, parseNumber(rawMaterial.stockQty)),
+    costPerUnit: Math.max(0, parseNumber(rawMaterial.costPerUnit)),
+    updatedAt: String(rawMaterial.updatedAt || nowIso())
+  };
+}
+
+function normalizeProductionRecipe(rawRecipe = {}) {
+  const components = Array.isArray(rawRecipe.components)
+    ? rawRecipe.components
+        .map((component) => ({
+          materialId: String(component?.materialId || "").trim(),
+          materialName: String(component?.materialName || "").trim(),
+          qty: Math.max(0, parseNumber(component?.qty))
+        }))
+        .filter((component) => component.materialId && component.qty > 0)
+    : [];
+
+  return {
+    id: String(rawRecipe.id || uid("recipe")).trim(),
+    productId: String(rawRecipe.productId || "").trim(),
+    productName: String(rawRecipe.productName || "").trim(),
+    yieldQty: Math.max(0.0001, parseNumber(rawRecipe.yieldQty || 1)),
+    components,
+    updatedAt: String(rawRecipe.updatedAt || nowIso())
+  };
+}
+
+function normalizeProductionBatch(rawBatch = {}) {
+  const materialsUsed = Array.isArray(rawBatch.materialsUsed)
+    ? rawBatch.materialsUsed.map((row) => ({
+        materialId: String(row?.materialId || "").trim(),
+        materialName: String(row?.materialName || "").trim(),
+        qty: Math.max(0, parseNumber(row?.qty)),
+        unit: String(row?.unit || "").trim(),
+        costPerUnit: Math.max(0, parseNumber(row?.costPerUnit)),
+        totalCost: Math.max(0, parseNumber(row?.totalCost))
+      }))
+    : [];
+
+  return {
+    id: String(rawBatch.id || uid("batch")).trim(),
+    date: String(rawBatch.date || localDateIso()).trim(),
+    productId: String(rawBatch.productId || "").trim(),
+    productName: String(rawBatch.productName || "").trim(),
+    outputQty: Math.max(0, parseNumber(rawBatch.outputQty)),
+    totalCost: Math.max(0, parseNumber(rawBatch.totalCost)),
+    unitCost: Math.max(0, parseNumber(rawBatch.unitCost)),
+    notes: String(rawBatch.notes || "").trim(),
+    materialsUsed,
+    createdAt: String(rawBatch.createdAt || nowIso())
+  };
+}
+
 function normalizeClient(rawClient = {}) {
   const managedByType = String(rawClient.managedByType || "owner").trim().toLowerCase() === "seller" ? "seller" : "owner";
   return {
@@ -565,7 +623,7 @@ function ensureDailyClosures(data) {
 
 function readDb() {
   if (!fs.existsSync(dbPath)) {
-    fs.writeFileSync(dbPath, JSON.stringify({ clients: [], prospects: [], visits: [], sellers: [], sellerUsers: [], sellerSessions: [], appointments: [], products: [], sellerStocks: [], inventory: [], productGoals: [], clientMovements: [], dailyClosures: [], settings: { ownerWeeklyGoal: 0, lastAutoBackupDate: "" } }, null, 2));
+    fs.writeFileSync(dbPath, JSON.stringify({ clients: [], prospects: [], visits: [], sellers: [], sellerUsers: [], sellerSessions: [], appointments: [], products: [], sellerStocks: [], inventory: [], productGoals: [], clientMovements: [], dailyClosures: [], rawMaterials: [], productionRecipes: [], productionBatches: [], settings: { ownerWeeklyGoal: 0, lastAutoBackupDate: "" } }, null, 2));
   }
 
   const raw = fs.readFileSync(dbPath, "utf-8");
@@ -585,6 +643,9 @@ function readDb() {
     productGoals: Array.isArray(parsed.productGoals) ? parsed.productGoals : [],
     clientMovements: Array.isArray(parsed.clientMovements) ? parsed.clientMovements.map(normalizeClientMovement) : [],
     dailyClosures: Array.isArray(parsed.dailyClosures) ? parsed.dailyClosures : [],
+    rawMaterials: Array.isArray(parsed.rawMaterials) ? parsed.rawMaterials.map(normalizeRawMaterial) : [],
+    productionRecipes: Array.isArray(parsed.productionRecipes) ? parsed.productionRecipes.map(normalizeProductionRecipe) : [],
+    productionBatches: Array.isArray(parsed.productionBatches) ? parsed.productionBatches.map(normalizeProductionBatch) : [],
     settings:
       typeof parsed.settings === "object" && parsed.settings
         ? parsed.settings
@@ -898,6 +959,99 @@ function computeProductGoalProgress(data, ownerType, ownerId = "") {
   });
 }
 
+function findInventoryItemByProduct(inventory, productId, productName) {
+  const normalizedName = String(productName || "").trim().toLowerCase();
+  const byId = productId ? inventory.find((item) => String(item.productId) === String(productId)) : null;
+  const byName = normalizedName
+    ? inventory.find((item) => String(item.productName || "").trim().toLowerCase() === normalizedName)
+    : null;
+  return byId || byName || null;
+}
+
+function computeProductionSummary(data) {
+  const inventory = (Array.isArray(data.inventory) ? data.inventory : []).map(normalizeInventoryItem);
+  const rawMaterials = (Array.isArray(data.rawMaterials) ? data.rawMaterials : []).map(normalizeRawMaterial);
+  const recipes = (Array.isArray(data.productionRecipes) ? data.productionRecipes : []).map(normalizeProductionRecipe);
+  const batches = (Array.isArray(data.productionBatches) ? data.productionBatches : []).map(normalizeProductionBatch);
+  const weeklyDemand = computeWeeklyProductSales(data.visits || []);
+  const recipeMap = new Map(
+    recipes.map((recipe) => [recipe.productId || String(recipe.productName || "").toLowerCase(), recipe])
+  );
+  const materialStockMap = new Map(rawMaterials.map((material) => [material.id, material]));
+  const requiredMaterialMap = new Map();
+
+  const byProduct = weeklyDemand.map((row) => {
+    const stockItem = findInventoryItemByProduct(inventory, row.productId, row.productName);
+    const currentStock = stockItem ? parseNumber(stockItem.quantity) : 0;
+    const suggestedProduction = Math.max(0, Math.ceil(Math.max(0, row.soldQty - currentStock)));
+    const recipeKey = row.productId || String(row.productName || "").toLowerCase();
+    const recipe = recipeMap.get(recipeKey) || null;
+    if (recipe && suggestedProduction > 0) {
+      const factor = suggestedProduction / Math.max(0.0001, parseNumber(recipe.yieldQty));
+      for (const component of recipe.components) {
+        const current = requiredMaterialMap.get(component.materialId) || {
+          materialId: component.materialId,
+          materialName: component.materialName,
+          requiredQty: 0
+        };
+        current.requiredQty += parseNumber(component.qty) * factor;
+        requiredMaterialMap.set(component.materialId, current);
+      }
+    }
+    return {
+      productId: row.productId,
+      productName: row.productName,
+      weekDemandQty: row.soldQty,
+      currentStock,
+      suggestedProduction,
+      hasRecipe: !!recipe
+    };
+  });
+
+  const requiredMaterials = [...requiredMaterialMap.values()]
+    .map((required) => {
+      const stock = materialStockMap.get(required.materialId);
+      const currentStock = stock ? parseNumber(stock.stockQty) : 0;
+      const toBuyQty = Math.max(0, required.requiredQty - currentStock);
+      return {
+        ...required,
+        unit: stock?.unit || "",
+        currentStock,
+        toBuyQty,
+        costPerUnit: stock ? parseNumber(stock.costPerUnit) : 0,
+        estimatedBuyCost: toBuyQty * (stock ? parseNumber(stock.costPerUnit) : 0)
+      };
+    })
+    .sort((a, b) => b.toBuyQty - a.toBuyQty);
+
+  const byProductCostMap = new Map();
+  for (const batch of batches) {
+    const key = batch.productId || String(batch.productName || "").toLowerCase();
+    const current = byProductCostMap.get(key) || {
+      productId: batch.productId,
+      productName: batch.productName,
+      totalOutput: 0,
+      totalCost: 0
+    };
+    current.totalOutput += parseNumber(batch.outputQty);
+    current.totalCost += parseNumber(batch.totalCost);
+    byProductCostMap.set(key, current);
+  }
+  const averageUnitCostByProduct = [...byProductCostMap.values()]
+    .map((row) => ({
+      ...row,
+      avgUnitCost: row.totalOutput > 0 ? row.totalCost / row.totalOutput : 0
+    }))
+    .sort((a, b) => b.totalOutput - a.totalOutput);
+
+  return {
+    byProduct,
+    requiredMaterials,
+    averageUnitCostByProduct,
+    totalEstimatedBuyCost: requiredMaterials.reduce((acc, row) => acc + parseNumber(row.estimatedBuyCost), 0)
+  };
+}
+
 function parseBearerToken(headerValue = "") {
   const raw = String(headerValue || "");
   if (!raw.toLowerCase().startsWith("bearer ")) return "";
@@ -1067,6 +1221,9 @@ app.post("/api/system/db-import", (req, res) => {
     productGoals: Array.isArray(payload.productGoals) ? payload.productGoals : [],
     clientMovements: Array.isArray(payload.clientMovements) ? payload.clientMovements : [],
     dailyClosures: Array.isArray(payload.dailyClosures) ? payload.dailyClosures : [],
+    rawMaterials: Array.isArray(payload.rawMaterials) ? payload.rawMaterials : [],
+    productionRecipes: Array.isArray(payload.productionRecipes) ? payload.productionRecipes : [],
+    productionBatches: Array.isArray(payload.productionBatches) ? payload.productionBatches : [],
     settings: typeof payload.settings === "object" && payload.settings ? payload.settings : { ownerWeeklyGoal: 0, lastAutoBackupDate: "" }
   };
 
@@ -1165,6 +1322,10 @@ app.get("/api/data", (_req, res) => {
     appointments: data.appointments,
     products: data.products.map(normalizeProduct),
     inventory: (data.inventory || []).map(normalizeInventoryItem),
+    rawMaterials: (data.rawMaterials || []).map(normalizeRawMaterial),
+    productionRecipes: (data.productionRecipes || []).map(normalizeProductionRecipe),
+    productionBatches: (data.productionBatches || []).map(normalizeProductionBatch).sort((a, b) => new Date(b.date) - new Date(a.date)),
+    productionSummary: computeProductionSummary(data),
     productGoals: (data.productGoals || []).map(normalizeProductGoal),
     clientMovements: (data.clientMovements || []).map(normalizeClientMovement),
     ownerProductGoalProgress: computeProductGoalProgress(data, "owner", ""),
@@ -1286,6 +1447,182 @@ app.post("/api/inventory/transfer", (req, res) => {
   data.sellerStocks = stocks;
   writeDb(data);
   return res.status(200).json({ ok: true });
+});
+
+app.get("/api/production", (_req, res) => {
+  const data = readDb();
+  return res.status(200).json({
+    rawMaterials: (data.rawMaterials || []).map(normalizeRawMaterial),
+    productionRecipes: (data.productionRecipes || []).map(normalizeProductionRecipe),
+    productionBatches: (data.productionBatches || []).map(normalizeProductionBatch).sort((a, b) => new Date(b.date) - new Date(a.date)),
+    productionSummary: computeProductionSummary(data)
+  });
+});
+
+app.post("/api/production/raw-materials", (req, res) => {
+  const data = readDb();
+  const body = req.body || {};
+  const material = normalizeRawMaterial({
+    id: uid("raw"),
+    name: body.name,
+    unit: body.unit,
+    stockQty: body.stockQty,
+    costPerUnit: body.costPerUnit,
+    updatedAt: nowIso()
+  });
+  if (!material.name) return res.status(400).json({ error: "Nombre de materia prima obligatorio." });
+
+  const materials = (data.rawMaterials || []).map(normalizeRawMaterial);
+  const current = materials.find((row) => String(row.name || "").trim().toLowerCase() === material.name.toLowerCase());
+  if (current) {
+    current.unit = material.unit || current.unit;
+    current.stockQty = material.stockQty;
+    current.costPerUnit = material.costPerUnit;
+    current.updatedAt = nowIso();
+  } else {
+    materials.unshift(material);
+  }
+  data.rawMaterials = materials;
+  writeDb(data);
+  return res.status(201).json({ ok: true, rawMaterials: data.rawMaterials });
+});
+
+app.put("/api/production/raw-materials/:id", (req, res) => {
+  const id = String(req.params.id || "").trim();
+  if (!id) return res.status(400).json({ error: "ID invalido." });
+
+  const data = readDb();
+  const materials = (data.rawMaterials || []).map(normalizeRawMaterial);
+  const current = materials.find((row) => row.id === id);
+  if (!current) return res.status(404).json({ error: "Materia prima no encontrada." });
+
+  current.name = String(req.body?.name ?? current.name).trim() || current.name;
+  current.unit = String(req.body?.unit ?? current.unit).trim() || current.unit;
+  current.stockQty = Math.max(0, parseNumber(req.body?.stockQty ?? current.stockQty));
+  current.costPerUnit = Math.max(0, parseNumber(req.body?.costPerUnit ?? current.costPerUnit));
+  current.updatedAt = nowIso();
+  data.rawMaterials = materials;
+  writeDb(data);
+  return res.status(200).json({ ok: true, material: current });
+});
+
+app.post("/api/production/recipes", (req, res) => {
+  const data = readDb();
+  const body = req.body || {};
+  const productId = String(body.productId || "").trim();
+  const productName = String(body.productName || "").trim();
+  if (!productName) return res.status(400).json({ error: "Producto obligatorio para receta." });
+
+  const recipe = normalizeProductionRecipe({
+    id: uid("recipe"),
+    productId,
+    productName,
+    yieldQty: body.yieldQty,
+    components: body.components,
+    updatedAt: nowIso()
+  });
+  if (recipe.components.length === 0) return res.status(400).json({ error: "La receta debe tener al menos una materia prima." });
+
+  const recipes = (data.productionRecipes || []).map(normalizeProductionRecipe);
+  const current = recipes.find(
+    (row) =>
+      (productId && row.productId === productId) ||
+      String(row.productName || "").trim().toLowerCase() === productName.toLowerCase()
+  );
+  if (current) {
+    current.productId = productId || current.productId;
+    current.productName = recipe.productName;
+    current.yieldQty = recipe.yieldQty;
+    current.components = recipe.components;
+    current.updatedAt = nowIso();
+  } else {
+    recipes.unshift(recipe);
+  }
+  data.productionRecipes = recipes;
+  writeDb(data);
+  return res.status(201).json({ ok: true, productionRecipes: recipes });
+});
+
+app.post("/api/production/batches", (req, res) => {
+  const data = readDb();
+  const body = req.body || {};
+  const productId = String(body.productId || "").trim();
+  const productName = String(body.productName || "").trim();
+  const outputQty = Math.max(0, parseNumber(body.outputQty));
+  const date = String(body.date || localDateIso()).trim();
+  if (!productName || outputQty <= 0) return res.status(400).json({ error: "Producto y cantidad producida son obligatorios." });
+
+  const recipes = (data.productionRecipes || []).map(normalizeProductionRecipe);
+  const recipe = recipes.find(
+    (row) =>
+      (productId && row.productId === productId) ||
+      String(row.productName || "").trim().toLowerCase() === productName.toLowerCase()
+  );
+  if (!recipe) return res.status(400).json({ error: "No existe receta para este producto." });
+
+  const materials = (data.rawMaterials || []).map(normalizeRawMaterial);
+  const factor = outputQty / Math.max(0.0001, parseNumber(recipe.yieldQty));
+  const materialsUsed = [];
+  for (const component of recipe.components) {
+    const material = materials.find((row) => row.id === component.materialId);
+    if (!material) return res.status(400).json({ error: `Materia prima no encontrada en receta: ${component.materialName}` });
+    const requiredQty = parseNumber(component.qty) * factor;
+    if (parseNumber(material.stockQty) < requiredQty) {
+      return res.status(400).json({
+        error: `Stock insuficiente de materia prima: ${material.name}. Disponible ${parseNumber(material.stockQty).toFixed(2)} ${material.unit}, requerido ${requiredQty.toFixed(2)} ${material.unit}.`
+      });
+    }
+    material.stockQty = Math.max(0, parseNumber(material.stockQty) - requiredQty);
+    material.updatedAt = nowIso();
+    materialsUsed.push({
+      materialId: material.id,
+      materialName: material.name,
+      qty: requiredQty,
+      unit: material.unit,
+      costPerUnit: parseNumber(material.costPerUnit),
+      totalCost: requiredQty * parseNumber(material.costPerUnit)
+    });
+  }
+
+  const totalCost = materialsUsed.reduce((acc, row) => acc + parseNumber(row.totalCost), 0);
+  const unitCost = outputQty > 0 ? totalCost / outputQty : 0;
+  const batch = normalizeProductionBatch({
+    id: uid("batch"),
+    date,
+    productId,
+    productName,
+    outputQty,
+    totalCost,
+    unitCost,
+    notes: String(body.notes || "").trim(),
+    materialsUsed,
+    createdAt: nowIso()
+  });
+
+  const inventory = (data.inventory || []).map(normalizeInventoryItem);
+  const invItem = findInventoryItemByProduct(inventory, productId, productName);
+  if (invItem) {
+    invItem.quantity = Math.max(0, parseNumber(invItem.quantity) + outputQty);
+    invItem.productName = productName || invItem.productName;
+    invItem.updatedAt = nowIso();
+  } else {
+    inventory.push(
+      normalizeInventoryItem({
+        id: uid("inv"),
+        productId,
+        productName,
+        quantity: outputQty,
+        updatedAt: nowIso()
+      })
+    );
+  }
+
+  data.rawMaterials = materials;
+  data.inventory = inventory;
+  data.productionRecipes = recipes;
+  data.productionBatches = [batch, ...((data.productionBatches || []).map(normalizeProductionBatch))];
+  writeDb(data);
+  return res.status(201).json({ ok: true, batch });
 });
 
 app.post("/api/product-goals/owner", (req, res) => {

@@ -2,7 +2,7 @@
 import logoPlatanito from "./assets/logo-platanito.jpg";
 
 const API_BASE = (import.meta.env.VITE_API_URL || "http://localhost:4000/api").replace(/\/$/, "");
-const tabs = [["dashboard", "Panel"],["clients", "Clientes"],["visits", "Visitas"],["products", "Productos"],["inventory", "Inventario"],["sellers", "Vendedores"],["reports", "Reportes"]];
+const tabs = [["dashboard", "Panel"],["clients", "Clientes"],["visits", "Visitas"],["sales", "Ventas"],["products", "Productos"],["inventory", "Inventario"],["production", "Produccion"],["sellers", "Vendedores"],["reports", "Reportes"]];
 
 const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 const money = (v) => new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(num(v));
@@ -71,8 +71,9 @@ async function apiDelete(path) {
 }
 
 export default function App() {
+  const todayIso = new Date().toISOString().slice(0, 10);
   const [tab, setTab] = React.useState("dashboard");
-  const [data, setData] = React.useState({ clients: [], prospects: [], visits: [], products: [], inventory: [], sellers: [], sellerOverview: [], dashboard: { totalSoldThisWeek: 0, totalDebt: 0, clientsNeedingVisit: [], topClients: [] } });
+  const [data, setData] = React.useState({ clients: [], prospects: [], visits: [], products: [], inventory: [], rawMaterials: [], productionRecipes: [], productionBatches: [], productionSummary: { byProduct: [], requiredMaterials: [], averageUnitCostByProduct: [], totalEstimatedBuyCost: 0 }, sellers: [], sellerOverview: [], dashboard: { totalSoldThisWeek: 0, totalDebt: 0, clientsNeedingVisit: [], topClients: [] } });
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState("");
   const [ok, setOk] = React.useState("");
@@ -84,6 +85,7 @@ export default function App() {
   const [showDebtDetails, setShowDebtDetails] = React.useState(false);
   const [backupBusy, setBackupBusy] = React.useState(false);
   const [lastBackupFile, setLastBackupFile] = React.useState("");
+  const [salesFilters, setSalesFilters] = React.useState({ date: todayIso, clientId: "", sellerId: "", saleType: "all" });
   const [clientEditId, setClientEditId] = React.useState("");
   const [clientEditForm, setClientEditForm] = React.useState(null);
 
@@ -93,7 +95,17 @@ export default function App() {
   const [inventoryForm, setInventoryForm] = React.useState({ productId: "", quantity: "" });
   const [inventoryDraft, setInventoryDraft] = React.useState({});
   const [transferForm, setTransferForm] = React.useState({ sellerId: "", productId: "", quantity: "" });
+  const [rawMaterialForm, setRawMaterialForm] = React.useState({ name: "", unit: "kg", stockQty: "", costPerUnit: "" });
+  const [recipeForm, setRecipeForm] = React.useState({ productId: "", yieldQty: "" });
+  const [recipeComponentDraft, setRecipeComponentDraft] = React.useState({ materialId: "", qty: "" });
+  const [recipeComponents, setRecipeComponents] = React.useState([]);
+  const [batchForm, setBatchForm] = React.useState({ date: new Date().toISOString().slice(0, 10), productId: "", outputQty: "", notes: "" });
   const sellers = React.useMemo(() => (data.sellers || []).filter((s) => s.role === "seller" && s.active), [data.sellers]);
+  const selectedProductRecipe = React.useMemo(() => {
+    const productId = String(recipeForm.productId || "");
+    if (!productId) return null;
+    return (data.productionRecipes || []).find((recipe) => String(recipe.productId || "") === productId) || null;
+  }, [data.productionRecipes, recipeForm.productId]);
 
   async function loadAll() {
     try {
@@ -178,6 +190,45 @@ export default function App() {
         .sort((a, b) => b.debt - a.debt)
     };
   }, [data.clients, data.visits]);
+
+  const salesRows = React.useMemo(() => {
+    return (data.visits || [])
+      .map((visit) => {
+        const saleType = String(visit.saleType || visit.paymentType || "").toLowerCase();
+        if (String(visit.visitType || "").toLowerCase() === "count_only") return null;
+        if (saleType === "degustacion") return null;
+        const client = (data.clients || []).find((c) => c.id === visit.clientId);
+        const seller = (data.sellers || []).find((s) => s.id === visit.createdBySellerId);
+        const totalValue = num(visit.totalValue ?? visit.soldAmount);
+        const collected = num(visit.amountCollected);
+        const pending = Math.max(0, totalValue - collected);
+        return {
+          ...visit,
+          saleType: saleType || "consignado",
+          clientName: client?.tradeName || client?.name || visit.prospectTradeName || "Prospecto",
+          sellerName: visit.createdBySellerName || (visit.createdBySellerId ? (seller?.name || "Vendedor") : "Admin"),
+          totalValue,
+          collected,
+          pending
+        };
+      })
+      .filter(Boolean)
+      .filter((row) => {
+        if (salesFilters.date && String(row.date) !== String(salesFilters.date)) return false;
+        if (salesFilters.clientId && String(row.clientId) !== String(salesFilters.clientId)) return false;
+        if (salesFilters.sellerId === "admin" && row.createdBySellerId) return false;
+        if (salesFilters.sellerId && salesFilters.sellerId !== "admin" && String(row.createdBySellerId || "") !== String(salesFilters.sellerId)) return false;
+        if (salesFilters.saleType !== "all" && String(row.saleType) !== String(salesFilters.saleType)) return false;
+        return true;
+      })
+      .sort((a, b) => new Date(b.date) - new Date(a.date));
+  }, [data.visits, data.clients, data.sellers, salesFilters]);
+
+  const salesSummary = React.useMemo(() => ({
+    totalValue: salesRows.reduce((acc, row) => acc + num(row.totalValue), 0),
+    totalCollected: salesRows.reduce((acc, row) => acc + num(row.collected), 0),
+    totalPending: salesRows.reduce((acc, row) => acc + num(row.pending), 0)
+  }), [salesRows]);
 
   const degustationSummary = React.useMemo(() => {
     const prospectsById = new Map((data.prospects || []).map((p) => [String(p.id), p]));
@@ -426,6 +477,88 @@ export default function App() {
     }
   }
 
+  function addRecipeComponent() {
+    const material = (data.rawMaterials || []).find((row) => row.id === recipeComponentDraft.materialId);
+    const qty = num(recipeComponentDraft.qty);
+    if (!material || qty <= 0) {
+      setError("Selecciona materia prima y cantidad.");
+      return;
+    }
+    setRecipeComponents((prev) => {
+      const current = prev.find((row) => row.materialId === material.id);
+      if (current) {
+        return prev.map((row) => row.materialId === material.id ? { ...row, qty: num(row.qty) + qty } : row);
+      }
+      return [...prev, { materialId: material.id, materialName: material.name, qty }];
+    });
+    setRecipeComponentDraft({ materialId: "", qty: "" });
+  }
+
+  function removeRecipeComponent(materialId) {
+    setRecipeComponents((prev) => prev.filter((row) => row.materialId !== materialId));
+  }
+
+  async function saveRawMaterial(e) {
+    e.preventDefault();
+    if (!String(rawMaterialForm.name || "").trim()) return setError("Nombre de materia prima obligatorio.");
+    try {
+      await apiPost("/production/raw-materials", {
+        name: rawMaterialForm.name,
+        unit: rawMaterialForm.unit || "kg",
+        stockQty: num(rawMaterialForm.stockQty),
+        costPerUnit: num(rawMaterialForm.costPerUnit)
+      });
+      setRawMaterialForm({ name: "", unit: "kg", stockQty: "", costPerUnit: "" });
+      setOk("Materia prima guardada");
+      await loadAll();
+    } catch (err) {
+      setError(err.message || "Error");
+    }
+  }
+
+  async function saveRecipe(e) {
+    e.preventDefault();
+    const product = (data.products || []).find((row) => row.id === recipeForm.productId);
+    if (!product) return setError("Producto obligatorio.");
+    if (num(recipeForm.yieldQty) <= 0) return setError("Rendimiento debe ser mayor a 0.");
+    if (recipeComponents.length === 0) return setError("Agrega al menos una materia prima.");
+    try {
+      await apiPost("/production/recipes", {
+        productId: product.id,
+        productName: product.name,
+        yieldQty: num(recipeForm.yieldQty),
+        components: recipeComponents.map((row) => ({ materialId: row.materialId, materialName: row.materialName, qty: num(row.qty) }))
+      });
+      setRecipeForm({ productId: "", yieldQty: "" });
+      setRecipeComponents([]);
+      setOk("Receta guardada");
+      await loadAll();
+    } catch (err) {
+      setError(err.message || "Error");
+    }
+  }
+
+  async function saveBatch(e) {
+    e.preventDefault();
+    const product = (data.products || []).find((row) => row.id === batchForm.productId);
+    if (!product) return setError("Producto obligatorio.");
+    if (num(batchForm.outputQty) <= 0) return setError("Cantidad producida debe ser mayor a 0.");
+    try {
+      await apiPost("/production/batches", {
+        date: batchForm.date,
+        productId: product.id,
+        productName: product.name,
+        outputQty: num(batchForm.outputQty),
+        notes: batchForm.notes
+      });
+      setBatchForm({ date: new Date().toISOString().slice(0, 10), productId: "", outputQty: "", notes: "" });
+      setOk("Lote de produccion guardado");
+      await loadAll();
+    } catch (err) {
+      setError(err.message || "Error");
+    }
+  }
+
   async function markPaid(id) {
     try { await apiPost(`/visits/${id}/mark-paid`, {}); setOk("Pago marcado"); await loadAll(); }
     catch (err) { setError(err.message || "Error"); }
@@ -483,9 +616,13 @@ export default function App() {
 
       {!loading && tab === "visits" && <section className="panel"><h3>Visitas</h3><ul className="simple-list">{[...(data.visits || [])].sort((a, b) => new Date(b.date) - new Date(a.date)).map((v) => { const c = data.clients.find((x) => x.id === v.clientId); const s = data.sellers.find((x) => x.id === v.createdBySellerId); const saleType = String(v.saleType || v.paymentType || "").toLowerCase(); const visitTotal = num(v.totalValue ?? v.soldAmount); const pending = Math.max(0, visitTotal - num(v.amountCollected)); const canMarkPaid = (saleType === "boleto" || saleType === "consignado") && pending > 0; const visitName = c?.tradeName || c?.name || v.prospectTradeName || "Prospecto"; const visitRow = { ...v, clientName: visitName }; return <li key={v.id}><div><span>{visitName}</span><small>{date(v.date)} | {v.visitType || "dispatch"} | {v.saleType || v.paymentType}</small>{v.prospectTradeName && !v.clientId ? <small>Prospecto: {v.prospectTradeName}{v.prospectBuyerName ? ` | Resp: ${v.prospectBuyerName}` : ""}</small> : null}<small>Registrado por: {v.createdBySellerName || (v.createdBySellerId ? (s?.name || "Vendedor") : "Admin")}</small><small>Total: {money(v.totalValue ?? v.soldAmount)} | Cobrado: {money(v.amountCollected)}</small></div><div className="rightCol"><div className="miniActions">{canMarkPaid ? <button className="secondary btnMini" type="button" onClick={() => markPaid(v.id)}>Marcar pagado</button> : null}<button className="danger btnMini" type="button" onClick={() => removeVisit(visitRow)}>Eliminar</button></div><strong>{money(v.amountCollected)}</strong></div></li>; })}</ul></section>}
 
+      {!loading && tab === "sales" && <section className="stack"><article className="panel"><h3>Ventas</h3><div className="form inlineForm"><label>Fecha<input type="date" value={salesFilters.date} onChange={(e) => setSalesFilters((d) => ({ ...d, date: e.target.value }))} /></label><label>Cliente<select value={salesFilters.clientId} onChange={(e) => setSalesFilters((d) => ({ ...d, clientId: e.target.value }))}><option value="">Todos</option>{(data.clients || []).map((c) => <option key={c.id} value={c.id}>{c.tradeName || c.name}</option>)}</select></label><label>Vendedor<select value={salesFilters.sellerId} onChange={(e) => setSalesFilters((d) => ({ ...d, sellerId: e.target.value }))}><option value="">Todos</option><option value="admin">Admin</option>{(data.sellers || []).filter((s) => s.role === "seller" && s.active).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></label><label>Tipo<select value={salesFilters.saleType} onChange={(e) => setSalesFilters((d) => ({ ...d, saleType: e.target.value }))}><option value="all">Todos</option><option value="a_vista">A vista</option><option value="consignado">Consignado</option><option value="boleto">Boleto</option></select></label><div className="miniActions"><button className="btnMini" type="button" onClick={() => setSalesFilters({ date: todayIso, clientId: "", sellerId: "", saleType: "all" })}>Hoy</button><button className="btnMini" type="button" onClick={() => setSalesFilters({ date: "", clientId: "", sellerId: "", saleType: "all" })}>Limpiar</button></div></div><div className="cards-grid"><article className="stat-card warm"><span>Vendido</span><strong>{money(salesSummary.totalValue)}</strong></article><article className="stat-card cool"><span>Cobrado</span><strong>{money(salesSummary.totalCollected)}</strong></article><article className="stat-card mint"><span>Pendiente</span><strong>{money(salesSummary.totalPending)}</strong></article></div></article><article className="panel"><h3>Detalle de ventas</h3><ul className="simple-list">{salesRows.map((row) => <li key={row.id}><div><span>{row.clientName}</span><small>{date(row.date)} | {row.saleType}</small><small>Vendedor: {row.sellerName}</small></div><div className="rightCol"><small>Total: {money(row.totalValue)}</small><small>Cobrado: {money(row.collected)}</small><strong>Pendiente: {money(row.pending)}</strong></div></li>)}</ul>{salesRows.length === 0 ? <p className="preview">Sin ventas para este filtro.</p> : null}</article></section>}
+
       {!loading && tab === "products" && <section className="stack"><article className="panel"><h3>Productos</h3><ul className="simple-list">{(data.products || []).map((p) => <li key={p.id}><span>{p.name}</span><strong>{money(p.unitPrice)}</strong></li>)}</ul></article><article className="panel form-panel"><h3>Nuevo producto</h3><form className="form" onSubmit={saveProduct}><label>Nombre<input required value={productForm.name} onChange={(e) => setProductForm((d) => ({ ...d, name: e.target.value }))} /></label><label>Valor unitario<input type="number" min="0" step="0.01" value={productForm.unitPrice} onChange={(e) => setProductForm((d) => ({ ...d, unitPrice: e.target.value }))} /></label><button className="primary full" type="submit">Guardar producto</button></form></article></section>}
 
       {!loading && tab === "inventory" && <section className="stack"><article className="panel"><h3>Inventario</h3><ul className="simple-list">{(data.inventory || []).map((i) => <li key={i.id}><div><span>{i.productName}</span><small>Cantidad actual: {num(i.quantity).toFixed(2)} unid</small></div><div className="rowEdit"><input className="inlineQty" type="number" min="0" step="0.01" value={inventoryDraft[i.id] ?? i.quantity} onChange={(e) => setInventoryDraft((d) => ({ ...d, [i.id]: e.target.value }))} /><button className="secondary btnMini" type="button" onClick={() => saveInventoryRow(i)}>Editar</button></div></li>)}</ul></article><article className="panel form-panel"><h3>Cargar inventario</h3><form className="form" onSubmit={saveInventory}><label>Producto<select value={inventoryForm.productId} onChange={(e) => setInventoryForm((d) => ({ ...d, productId: e.target.value }))}><option value="">Selecciona producto</option>{(data.products || []).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label><label>Cantidad<input type="number" min="0" step="0.01" value={inventoryForm.quantity} onChange={(e) => setInventoryForm((d) => ({ ...d, quantity: e.target.value }))} /></label><button className="primary full" type="submit">Guardar inventario</button></form></article><article className="panel form-panel"><h3>Transferir a vendedor</h3><form className="form" onSubmit={transferInventory}><label>Vendedor<select value={transferForm.sellerId} onChange={(e) => setTransferForm((d) => ({ ...d, sellerId: e.target.value }))}><option value="">Selecciona vendedor</option>{(data.sellers || []).filter((s) => s.role === "seller" && s.active).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></label><label>Producto<select value={transferForm.productId} onChange={(e) => setTransferForm((d) => ({ ...d, productId: e.target.value }))}><option value="">Selecciona producto</option>{(data.products || []).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label><label>Cantidad<input type="number" min="0" step="0.01" value={transferForm.quantity} onChange={(e) => setTransferForm((d) => ({ ...d, quantity: e.target.value }))} /></label><button className="secondary full" type="submit">Transferir</button></form></article></section>}
+
+      {!loading && tab === "production" && <section className="stack"><article className="panel"><h3>Produccion (demanda semanal)</h3><ul className="simple-list">{(data.productionSummary?.byProduct || []).map((row) => <li key={`prod_dem_${row.productId || row.productName}`}><div><span>{row.productName}</span><small>Demanda semana: {num(row.weekDemandQty).toFixed(2)} unid</small><small>Stock actual: {num(row.currentStock).toFixed(2)} unid</small><small>Receta: {row.hasRecipe ? "Si" : "No"}</small></div><strong>Producir: {num(row.suggestedProduction).toFixed(2)}</strong></li>)}</ul>{(data.productionSummary?.byProduct || []).length === 0 ? <p className="preview">Sin datos de ventas semanales aun.</p> : null}</article><div className="cards-grid"><article className="stat-card warm"><span>Compra sugerida MP</span><strong>{money(data.productionSummary?.totalEstimatedBuyCost || 0)}</strong></article></div><article className="panel"><h3>Materia prima por comprar</h3><ul className="simple-list">{(data.productionSummary?.requiredMaterials || []).map((row) => <li key={`mat_req_${row.materialId}`}><div><span>{row.materialName}</span><small>Necesario: {num(row.requiredQty).toFixed(2)} {row.unit}</small><small>Stock: {num(row.currentStock).toFixed(2)} {row.unit}</small></div><strong>Comprar: {num(row.toBuyQty).toFixed(2)} {row.unit}</strong></li>)}</ul>{(data.productionSummary?.requiredMaterials || []).length === 0 ? <p className="preview">Sin requerimientos calculados aun.</p> : null}</article><article className="panel"><h3>Costo unitario promedio por producto</h3><ul className="simple-list">{(data.productionSummary?.averageUnitCostByProduct || []).map((row) => <li key={`cost_avg_${row.productId || row.productName}`}><span>{row.productName}</span><strong>{money(row.avgUnitCost)}/unid</strong></li>)}</ul>{(data.productionSummary?.averageUnitCostByProduct || []).length === 0 ? <p className="preview">Aun no hay lotes de produccion.</p> : null}</article><article className="panel form-panel"><h3>Nueva materia prima</h3><form className="form" onSubmit={saveRawMaterial}><label>Nombre<input required value={rawMaterialForm.name} onChange={(e) => setRawMaterialForm((d) => ({ ...d, name: e.target.value }))} /></label><label>Unidad<input value={rawMaterialForm.unit} onChange={(e) => setRawMaterialForm((d) => ({ ...d, unit: e.target.value }))} /></label><label>Stock actual<input type="number" min="0" step="0.01" value={rawMaterialForm.stockQty} onChange={(e) => setRawMaterialForm((d) => ({ ...d, stockQty: e.target.value }))} /></label><label>Costo por unidad<input type="number" min="0" step="0.01" value={rawMaterialForm.costPerUnit} onChange={(e) => setRawMaterialForm((d) => ({ ...d, costPerUnit: e.target.value }))} /></label><button className="primary full" type="submit">Guardar materia prima</button></form><ul className="simple-list">{(data.rawMaterials || []).map((mat) => <li key={mat.id}><span>{mat.name} ({mat.unit})</span><strong>{num(mat.stockQty).toFixed(2)} | {money(mat.costPerUnit)}</strong></li>)}</ul></article><article className="panel form-panel"><h3>Receta por producto</h3><form className="form" onSubmit={saveRecipe}><label>Producto<select value={recipeForm.productId} onChange={(e) => setRecipeForm((d) => ({ ...d, productId: e.target.value }))}><option value="">Selecciona producto</option>{(data.products || []).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label><label>Rendimiento receta (unid finales)<input type="number" min="0.01" step="0.01" value={recipeForm.yieldQty} onChange={(e) => setRecipeForm((d) => ({ ...d, yieldQty: e.target.value }))} /></label><label>Materia prima<select value={recipeComponentDraft.materialId} onChange={(e) => setRecipeComponentDraft((d) => ({ ...d, materialId: e.target.value }))}><option value="">Selecciona materia prima</option>{(data.rawMaterials || []).map((mat) => <option key={mat.id} value={mat.id}>{mat.name}</option>)}</select></label><label>Cantidad requerida por receta<input type="number" min="0.0001" step="0.0001" value={recipeComponentDraft.qty} onChange={(e) => setRecipeComponentDraft((d) => ({ ...d, qty: e.target.value }))} /></label><div className="miniActions"><button className="btnMini" type="button" onClick={addRecipeComponent}>Agregar materia prima</button></div><ul className="simple-list">{recipeComponents.map((row) => <li key={`rc_${row.materialId}`}><span>{row.materialName}</span><div className="miniActions"><small>{num(row.qty).toFixed(4)}</small><button className="danger btnMini" type="button" onClick={() => removeRecipeComponent(row.materialId)}>Quitar</button></div></li>)}</ul><button className="primary full" type="submit">Guardar receta</button></form>{selectedProductRecipe ? <p className="preview">Receta actual cargada para este producto: rendimiento {num(selectedProductRecipe.yieldQty).toFixed(2)} unid.</p> : null}</article><article className="panel form-panel"><h3>Registrar lote producido</h3><form className="form" onSubmit={saveBatch}><label>Fecha<input type="date" value={batchForm.date} onChange={(e) => setBatchForm((d) => ({ ...d, date: e.target.value }))} /></label><label>Producto<select value={batchForm.productId} onChange={(e) => setBatchForm((d) => ({ ...d, productId: e.target.value }))}><option value="">Selecciona producto</option>{(data.products || []).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label><label>Cantidad producida (unid)<input type="number" min="0.01" step="0.01" value={batchForm.outputQty} onChange={(e) => setBatchForm((d) => ({ ...d, outputQty: e.target.value }))} /></label><label>Notas<textarea rows="2" value={batchForm.notes} onChange={(e) => setBatchForm((d) => ({ ...d, notes: e.target.value }))} /></label><button className="primary full" type="submit">Guardar lote</button></form><ul className="simple-list">{(data.productionBatches || []).slice(0, 20).map((batch) => <li key={batch.id}><div><span>{batch.productName}</span><small>{date(batch.date)} | Produccion: {num(batch.outputQty).toFixed(2)} unid</small></div><strong>{money(batch.unitCost)}/unid</strong></li>)}</ul></article></section>}
 
       {!loading && tab === "sellers" && <section className="panel"><h3>Vendedores</h3><ul className="simple-list">{(data.sellerOverview || []).map((s) => <li key={s.sellerId}><div><span>{s.sellerName}</span><small>Clientes: {s.totalClients} | Deuda: {money(s.totalDebt)}</small><small>Semana: {money(s.weekSales)} | Mes: {money(s.monthSales)}</small></div><strong>Comision: {money(s.commissionAmount)}</strong></li>)}</ul></section>}
 

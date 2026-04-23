@@ -112,7 +112,7 @@ export default function App() {
   const [showPanelDebtDetails, setShowPanelDebtDetails] = useState(false);
   const [savingMovement, setSavingMovement] = useState(false);
 
-  const [data, setData] = useState({ clients: [], prospects: [], visits: [], sellers: [], sellerOverview: [], appointments: [], products: [], inventory: [], productGoals: [], clientMovements: [], ownerProductGoalProgress: [], settings: { ownerWeeklyGoal: 0 }, dashboard: { totalSoldThisWeek: 0, totalDebt: 0, clientsNeedingVisit: [], topClients: [], ownerWeeklyGoal: 0, ownerWeeklyRemaining: 0, ownerWeeklyProgressPct: 0 } });
+  const [data, setData] = useState({ clients: [], prospects: [], visits: [], sellers: [], sellerOverview: [], appointments: [], products: [], inventory: [], rawMaterials: [], productionRecipes: [], productionBatches: [], productionSummary: { byProduct: [], requiredMaterials: [], averageUnitCostByProduct: [], totalEstimatedBuyCost: 0 }, productGoals: [], clientMovements: [], ownerProductGoalProgress: [], settings: { ownerWeeklyGoal: 0 }, dashboard: { totalSoldThisWeek: 0, totalDebt: 0, clientsNeedingVisit: [], topClients: [], ownerWeeklyGoal: 0, ownerWeeklyRemaining: 0, ownerWeeklyProgressPct: 0 } });
 
   const [clientForm, setClientForm] = useState(CLIENT_FORM_INITIAL);
   const [visitForm, setVisitForm] = useState({ date: today(), clientId: "", prospectTradeName: "", prospectBuyerName: "", prospectPhone: "", amountCollected: "", collectionMethod: "efectivo", saleType: "consignado", boletoDays: 7, nextVisitDate: "", notes: "" });
@@ -135,17 +135,26 @@ export default function App() {
   const [reportFilters, setReportFilters] = useState({ from: "", to: "", clientId: "", saleType: "all" });
   const [reportClientQuery, setReportClientQuery] = useState("");
   const [showReportClientSuggestions, setShowReportClientSuggestions] = useState(false);
+  const [salesFilters, setSalesFilters] = useState({ date: today(), clientId: "", sellerId: "", saleType: "all" });
+  const [salesClientQuery, setSalesClientQuery] = useState("");
+  const [showSalesClientSuggestions, setShowSalesClientSuggestions] = useState(false);
   const [showNextVisitPicker, setShowNextVisitPicker] = useState(false);
   const [showVisitDatePicker, setShowVisitDatePicker] = useState(false);
   const [showScheduleDatePicker, setShowScheduleDatePicker] = useState(false);
   const [showVisitScheduleDatePicker, setShowVisitScheduleDatePicker] = useState(false);
   const [showVisitFilterDatePicker, setShowVisitFilterDatePicker] = useState(false);
+  const [showSalesDatePicker, setShowSalesDatePicker] = useState(false);
   const [showMovementDatePicker, setShowMovementDatePicker] = useState(false);
   const [invoiceForm, setInvoiceForm] = useState({ invoiceNumber: "" });
   const [sellerGoalsForm, setSellerGoalsForm] = useState({ weeklyGoal: "", monthlyGoal: "", commissionRate: "" });
   const [sellerStockForm, setSellerStockForm] = useState({ productId: "", productName: "", quantity: "", notes: "" });
   const [sellerClientFilter, setSellerClientFilter] = useState("");
   const [ownerGoalForm, setOwnerGoalForm] = useState({ ownerWeeklyGoal: "" });
+  const [rawMaterialForm, setRawMaterialForm] = useState({ name: "", unit: "kg", stockQty: "", costPerUnit: "" });
+  const [recipeForm, setRecipeForm] = useState({ productId: "", yieldQty: "" });
+  const [recipeComponentDraft, setRecipeComponentDraft] = useState({ materialId: "", qty: "" });
+  const [recipeComponents, setRecipeComponents] = useState([]);
+  const [batchForm, setBatchForm] = useState({ date: today(), productId: "", outputQty: "", notes: "" });
   const [clientMovementForm, setClientMovementForm] = useState({
     date: today(),
     type: "ajuste",
@@ -160,7 +169,7 @@ export default function App() {
       setLoading(true);
       setError("");
       const p = await apiGet("/data");
-      setData({ clients: p.clients || [], prospects: p.prospects || [], visits: p.visits || [], sellers: p.sellers || [], sellerOverview: p.sellerOverview || [], appointments: p.appointments || [], products: p.products || [], inventory: p.inventory || [], productGoals: p.productGoals || [], clientMovements: p.clientMovements || [], ownerProductGoalProgress: p.ownerProductGoalProgress || [], settings: p.settings || { ownerWeeklyGoal: 0 }, dashboard: p.dashboard || { totalSoldThisWeek: 0, totalDebt: 0, clientsNeedingVisit: [], topClients: [], ownerWeeklyGoal: 0, ownerWeeklyRemaining: 0, ownerWeeklyProgressPct: 0 } });
+      setData({ clients: p.clients || [], prospects: p.prospects || [], visits: p.visits || [], sellers: p.sellers || [], sellerOverview: p.sellerOverview || [], appointments: p.appointments || [], products: p.products || [], inventory: p.inventory || [], rawMaterials: p.rawMaterials || [], productionRecipes: p.productionRecipes || [], productionBatches: p.productionBatches || [], productionSummary: p.productionSummary || { byProduct: [], requiredMaterials: [], averageUnitCostByProduct: [], totalEstimatedBuyCost: 0 }, productGoals: p.productGoals || [], clientMovements: p.clientMovements || [], ownerProductGoalProgress: p.ownerProductGoalProgress || [], settings: p.settings || { ownerWeeklyGoal: 0 }, dashboard: p.dashboard || { totalSoldThisWeek: 0, totalDebt: 0, clientsNeedingVisit: [], topClients: [], ownerWeeklyGoal: 0, ownerWeeklyRemaining: 0, ownerWeeklyProgressPct: 0 } });
       setOwnerGoalForm({ ownerWeeklyGoal: String(num((p.settings || {}).ownerWeeklyGoal)) });
     } catch (e) { setError(e.message || "Error"); } finally { setLoading(false); }
   }
@@ -209,6 +218,11 @@ export default function App() {
       .sort((a, b) => String(a.tradeName || a.name || "").localeCompare(String(b.tradeName || b.name || ""), "es", { sensitivity: "base" }));
   }, [data.clients, selectedSellerClientIds, sellerClientFilter]);
   const sellers = useMemo(() => (data.sellers || []).filter((s) => s.role === "seller" && s.active), [data.sellers]);
+  const selectedProductionRecipe = useMemo(() => {
+    const productId = String(recipeForm.productId || "");
+    if (!productId) return null;
+    return (data.productionRecipes || []).find((recipe) => String(recipe.productId || "") === productId) || null;
+  }, [data.productionRecipes, recipeForm.productId]);
   const clientVisits = useMemo(() => !selectedClient ? [] : data.visits.filter((v) => v.clientId === selectedClient.id).sort((a, b) => new Date(b.date) - new Date(a.date)), [data.visits, selectedClient]);
   const clientAppts = useMemo(() => !selectedClient ? [] : data.appointments.filter((a) => a.clientId === selectedClient.id && a.status !== "done").sort((a, b) => new Date(a.date) - new Date(b.date)), [data.appointments, selectedClient]);
   const accountSummary = useMemo(() => {
@@ -372,6 +386,17 @@ export default function App() {
     );
   }, [visitClientOptions, reportClientQuery]);
 
+  const filteredSalesClientOptions = useMemo(() => {
+    const q = salesClientQuery.trim().toLowerCase();
+    if (!q) return visitClientOptions;
+    return visitClientOptions.filter((client) =>
+      client.id.toLowerCase().includes(q) ||
+      client.internalId.toLowerCase().includes(q) ||
+      client.name.toLowerCase().includes(q) ||
+      client.buyer.toLowerCase().includes(q)
+    );
+  }, [visitClientOptions, salesClientQuery]);
+
   const reportVisits = useMemo(() => {
     return data.visits
       .filter((visit) => {
@@ -453,6 +478,45 @@ export default function App() {
 
     return { totalSales, totalCollected, pendingTotal, overdueTotal, upcomingTotal, byClient, byProduct, byDate };
   }, [reportVisits]);
+
+  const salesRows = useMemo(() => {
+    return data.visits
+      .map((visit) => {
+        const visitType = String(visit.visitType || "dispatch").toLowerCase();
+        const saleType = String(visit.saleType || visit.paymentType || "").toLowerCase();
+        if (visitType === "count_only" || saleType === "degustacion") return null;
+        const client = data.clients.find((c) => c.id === visit.clientId) || {};
+        const seller = data.sellers.find((s) => s.id === visit.createdBySellerId);
+        const totalValue = num(visit.totalValue ?? visit.soldAmount);
+        const amountCollected = num(visit.amountCollected);
+        const pending = Math.max(0, totalValue - amountCollected);
+        return {
+          ...visit,
+          saleType: saleType || "consignado",
+          clientName: client.tradeName || client.name || visit.prospectTradeName || "Prospecto",
+          sellerName: visit.createdBySellerName || (visit.createdBySellerId ? (seller?.name || "Vendedor") : "Admin"),
+          totalValue,
+          amountCollected,
+          pending
+        };
+      })
+      .filter(Boolean)
+      .filter((row) => {
+        if (salesFilters.date && String(row.date) !== String(salesFilters.date)) return false;
+        if (salesFilters.clientId && String(row.clientId || "") !== String(salesFilters.clientId)) return false;
+        if (salesFilters.sellerId === "admin" && row.createdBySellerId) return false;
+        if (salesFilters.sellerId && salesFilters.sellerId !== "admin" && String(row.createdBySellerId || "") !== String(salesFilters.sellerId)) return false;
+        if (salesFilters.saleType !== "all" && String(row.saleType || "") !== String(salesFilters.saleType)) return false;
+        return true;
+      })
+      .sort((a, b) => new Date(b.date) - new Date(a.date));
+  }, [data.visits, data.clients, data.sellers, salesFilters]);
+
+  const salesSummary = useMemo(() => ({
+    totalSales: salesRows.reduce((acc, row) => acc + num(row.totalValue), 0),
+    totalCollected: salesRows.reduce((acc, row) => acc + num(row.amountCollected), 0),
+    totalPending: salesRows.reduce((acc, row) => acc + num(row.pending), 0)
+  }), [salesRows]);
 
   const reportWeeklyByProduct = useMemo(() => {
     const stateMap = new Map();
@@ -650,6 +714,12 @@ export default function App() {
     setShowReportClientSuggestions(false);
   }
 
+  function selectSalesClient(client) {
+    setSalesFilters((prev) => ({ ...prev, clientId: client.id }));
+    setSalesClientQuery(formatClientOption(client));
+    setShowSalesClientSuggestions(false);
+  }
+
   function onChangeNextVisitDate(_event, selectedDate) {
     setShowNextVisitPicker(false);
     if (!selectedDate) return;
@@ -681,6 +751,12 @@ export default function App() {
     setVisitFilters((p) => ({ ...p, date: selectedDate.toISOString().slice(0, 10) }));
   }
 
+  function onChangeSalesDate(_event, selectedDate) {
+    setShowSalesDatePicker(false);
+    if (!selectedDate) return;
+    setSalesFilters((p) => ({ ...p, date: selectedDate.toISOString().slice(0, 10) }));
+  }
+
   function onChangeMovementDate(_event, selectedDate) {
     setShowMovementDatePicker(false);
     if (!selectedDate) return;
@@ -701,6 +777,10 @@ export default function App() {
     const productName = String(visitItemDraft.productQuery || "").trim();
     const quantity = visitEntryType === "count_only" ? 0 : num(visitItemDraft.quantity);
     const unitPrice = visitEntryType === "dispatch" ? num(visitItemDraft.unitPrice) : 0;
+    if (visitEntryType !== "count_only" && !String(visitItemDraft.productId || "").trim()) {
+      setError("Selecciona el producto desde la lista para descontar inventario correctamente.");
+      return;
+    }
     if (!productName || (visitEntryType !== "count_only" && quantity <= 0)) {
       setError(visitEntryType === "count_only" ? "Producto obligatorio." : "Producto y cantidad son obligatorios.");
       return;
@@ -921,6 +1001,82 @@ export default function App() {
       setToast("Stock transferido al vendedor");
     } catch (e) {
       setError(e.message || "No se pudo transferir inventario");
+    }
+  }
+
+  function addRecipeComponent() {
+    const material = (data.rawMaterials || []).find((row) => row.id === recipeComponentDraft.materialId);
+    const qty = num(recipeComponentDraft.qty);
+    if (!material || qty <= 0) return setError("Selecciona materia prima y cantidad valida.");
+    setRecipeComponents((prev) => {
+      const current = prev.find((row) => row.materialId === material.id);
+      if (current) {
+        return prev.map((row) => row.materialId === material.id ? { ...row, qty: num(row.qty) + qty } : row);
+      }
+      return [...prev, { materialId: material.id, materialName: material.name, qty }];
+    });
+    setRecipeComponentDraft({ materialId: "", qty: "" });
+  }
+
+  function removeRecipeComponent(materialId) {
+    setRecipeComponents((prev) => prev.filter((row) => row.materialId !== materialId));
+  }
+
+  async function saveRawMaterial() {
+    if (!String(rawMaterialForm.name || "").trim()) return setError("Nombre de materia prima obligatorio.");
+    try {
+      await apiPost("/production/raw-materials", {
+        name: rawMaterialForm.name,
+        unit: rawMaterialForm.unit || "kg",
+        stockQty: num(rawMaterialForm.stockQty),
+        costPerUnit: num(rawMaterialForm.costPerUnit)
+      });
+      setRawMaterialForm({ name: "", unit: "kg", stockQty: "", costPerUnit: "" });
+      await loadAll();
+      setToast("Materia prima guardada");
+    } catch (e) {
+      setError(e.message || "No se pudo guardar materia prima");
+    }
+  }
+
+  async function saveProductionRecipe() {
+    const product = (data.products || []).find((row) => row.id === recipeForm.productId);
+    if (!product) return setError("Producto obligatorio.");
+    if (num(recipeForm.yieldQty) <= 0) return setError("Rendimiento debe ser mayor a 0.");
+    if (recipeComponents.length === 0) return setError("Agrega al menos una materia prima.");
+    try {
+      await apiPost("/production/recipes", {
+        productId: product.id,
+        productName: product.name,
+        yieldQty: num(recipeForm.yieldQty),
+        components: recipeComponents.map((row) => ({ materialId: row.materialId, materialName: row.materialName, qty: num(row.qty) }))
+      });
+      setRecipeForm({ productId: "", yieldQty: "" });
+      setRecipeComponents([]);
+      await loadAll();
+      setToast("Receta guardada");
+    } catch (e) {
+      setError(e.message || "No se pudo guardar receta");
+    }
+  }
+
+  async function saveProductionBatch() {
+    const product = (data.products || []).find((row) => row.id === batchForm.productId);
+    if (!product) return setError("Producto obligatorio.");
+    if (num(batchForm.outputQty) <= 0) return setError("Cantidad producida debe ser mayor a 0.");
+    try {
+      await apiPost("/production/batches", {
+        date: batchForm.date || today(),
+        productId: product.id,
+        productName: product.name,
+        outputQty: num(batchForm.outputQty),
+        notes: batchForm.notes || ""
+      });
+      setBatchForm({ date: today(), productId: "", outputQty: "", notes: "" });
+      await loadAll();
+      setToast("Lote de produccion guardado");
+    } catch (e) {
+      setError(e.message || "No se pudo guardar lote");
     }
   }
 
@@ -1280,7 +1436,7 @@ export default function App() {
             <Text style={styles.k}>Control de Distribuidora</Text><Text style={styles.h}>Snack App</Text><Text style={styles.s}>API: {API_BASE}</Text>
           </View>
 
-        <View style={styles.tabs}>{[["panel", "Panel"], ["clientes", "Clientes"], ["visitas", "Visitas"], ["productos", "Productos"], ["inventario", "Inventario"], ["vendedores", "Vendedores"], ["reportes", "Reportes"]].map(([id, t]) => <Pressable key={id} style={[styles.tab, tab === id && styles.tabA]} onPress={() => { setTab(id); setShowActions(false); setShowVisitsActions(false); setShowClientSuggestions(false); setShowProductSuggestions(false); setShowNextVisitPicker(false); setShowVisitDatePicker(false); setShowScheduleDatePicker(false); setShowVisitScheduleDatePicker(false); setShowVisitFilterDatePicker(false); setShowVisitScheduleClientSuggestions(false); setShowReportClientSuggestions(false); if (id !== "clientes") { setSelectedClientId(""); setSelectedClientSaleVisitId(""); setShowClientSalesList(false); } if (id !== "visitas") setSelectedVisitId(""); if (id !== "vendedores") setSelectedSellerId(""); }}><Text style={[styles.tabT, tab === id && styles.tabTA]}>{t}</Text></Pressable>)}</View>
+        <View style={styles.tabs}>{[["panel", "Panel"], ["clientes", "Clientes"], ["visitas", "Visitas"], ["ventas", "Ventas"], ["productos", "Productos"], ["inventario", "Inventario"], ["produccion", "Produccion"], ["vendedores", "Vendedores"], ["reportes", "Reportes"]].map(([id, t]) => <Pressable key={id} style={[styles.tab, tab === id && styles.tabA]} onPress={() => { setTab(id); setShowActions(false); setShowVisitsActions(false); setShowClientSuggestions(false); setShowProductSuggestions(false); setShowNextVisitPicker(false); setShowVisitDatePicker(false); setShowScheduleDatePicker(false); setShowVisitScheduleDatePicker(false); setShowVisitFilterDatePicker(false); setShowSalesDatePicker(false); setShowVisitScheduleClientSuggestions(false); setShowReportClientSuggestions(false); setShowSalesClientSuggestions(false); if (id !== "clientes") { setSelectedClientId(""); setSelectedClientSaleVisitId(""); setShowClientSalesList(false); } if (id !== "visitas") setSelectedVisitId(""); if (id !== "vendedores") setSelectedSellerId(""); }}><Text style={[styles.tabT, tab === id && styles.tabTA]}>{t}</Text></Pressable>)}</View>
         {error ? <Text style={styles.err}>{error}</Text> : null}
         {toast ? <Text style={styles.ok}>{toast}</Text> : null}
         {loading ? <ActivityIndicator size="large" color="#d96d20" style={{ marginTop: 20 }} /> : null}
@@ -1787,6 +1943,129 @@ export default function App() {
           </>
         )}
 
+        {!loading && tab === "produccion" && (
+          <>
+            <View style={styles.card}>
+              <Text style={styles.t}>Produccion sugerida (semana)</Text>
+              {(data.productionSummary?.byProduct || []).map((row) => (
+                <View key={`prod_sug_${row.productId || row.productName}`} style={styles.itemLine}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.dropdownTitle}>{row.productName}</Text>
+                    <Text style={styles.dropdownSub}>Demanda: {num(row.weekDemandQty).toFixed(2)} unid | Stock: {num(row.currentStock).toFixed(2)} unid</Text>
+                    <Text style={styles.dropdownSub}>Receta: {row.hasRecipe ? "Si" : "No"}</Text>
+                  </View>
+                  <Text style={styles.dropdownTitle}>Producir: {num(row.suggestedProduction).toFixed(2)}</Text>
+                </View>
+              ))}
+              {(data.productionSummary?.byProduct || []).length === 0 ? <Text style={styles.s}>Sin demanda semanal aun.</Text> : null}
+            </View>
+
+            <View style={styles.grid}>
+              <View style={[styles.box, { backgroundColor: "#ffe7c8" }]}><Text>Compra MP sugerida</Text><Text style={styles.big}>{money(num(data.productionSummary?.totalEstimatedBuyCost))}</Text></View>
+            </View>
+
+            <View style={styles.card}>
+              <Text style={styles.t}>Materia prima</Text>
+              <TextInput style={styles.i} placeholder="Nombre materia prima" value={rawMaterialForm.name} onChangeText={(t) => setRawMaterialForm((p) => ({ ...p, name: t }))} />
+              <TextInput style={styles.i} placeholder="Unidad (kg, L, unid)" value={rawMaterialForm.unit} onChangeText={(t) => setRawMaterialForm((p) => ({ ...p, unit: t }))} />
+              <TextInput style={styles.i} placeholder="Stock actual" value={rawMaterialForm.stockQty} onChangeText={(t) => setRawMaterialForm((p) => ({ ...p, stockQty: t }))} keyboardType="decimal-pad" />
+              <TextInput style={styles.i} placeholder="Costo por unidad (R$)" value={rawMaterialForm.costPerUnit} onChangeText={(t) => setRawMaterialForm((p) => ({ ...p, costPerUnit: t }))} keyboardType="decimal-pad" />
+              <Pressable style={styles.btn} onPress={saveRawMaterial}><Text style={styles.btnT}>Guardar materia prima</Text></Pressable>
+              {(data.rawMaterials || []).map((row) => (
+                <View key={row.id} style={styles.itemLine}>
+                  <Text style={styles.dropdownTitle}>{row.name} ({row.unit})</Text>
+                  <Text style={styles.dropdownSub}>{num(row.stockQty).toFixed(2)} | {money(row.costPerUnit)}</Text>
+                </View>
+              ))}
+              {(data.rawMaterials || []).length === 0 ? <Text style={styles.s}>Sin materias primas cargadas.</Text> : null}
+            </View>
+
+            <View style={styles.card}>
+              <Text style={styles.t}>Receta por producto</Text>
+              <View style={styles.dropdown}>
+                {(data.products || []).map((product) => (
+                  <Pressable
+                    key={`prod_recipe_${product.id}`}
+                    style={[styles.dropdownItem, recipeForm.productId === product.id && styles.dropdownItemSelected]}
+                    onPress={() => setRecipeForm((p) => ({ ...p, productId: product.id }))}
+                  >
+                    <Text style={styles.dropdownTitle}>{product.name}</Text>
+                  </Pressable>
+                ))}
+              </View>
+              <TextInput style={styles.i} placeholder="Rendimiento receta (unid)" value={recipeForm.yieldQty} onChangeText={(t) => setRecipeForm((p) => ({ ...p, yieldQty: t }))} keyboardType="decimal-pad" />
+              <Text style={styles.s}>Agregar materia prima a la receta</Text>
+              <View style={styles.dropdown}>
+                {(data.rawMaterials || []).map((row) => (
+                  <Pressable
+                    key={`mat_recipe_${row.id}`}
+                    style={[styles.dropdownItem, recipeComponentDraft.materialId === row.id && styles.dropdownItemSelected]}
+                    onPress={() => setRecipeComponentDraft((p) => ({ ...p, materialId: row.id }))}
+                  >
+                    <Text style={styles.dropdownTitle}>{row.name}</Text>
+                  </Pressable>
+                ))}
+              </View>
+              <TextInput style={styles.i} placeholder="Cantidad por receta" value={recipeComponentDraft.qty} onChangeText={(t) => setRecipeComponentDraft((p) => ({ ...p, qty: t }))} keyboardType="decimal-pad" />
+              <Pressable style={styles.copy} onPress={addRecipeComponent}><Text style={styles.copyT}>Agregar componente</Text></Pressable>
+              {recipeComponents.map((row) => (
+                <View key={`recipe_comp_${row.materialId}`} style={styles.itemLine}>
+                  <Text style={styles.dropdownTitle}>{row.materialName}</Text>
+                  <View style={styles.invRowActions}>
+                    <Text style={styles.dropdownSub}>{num(row.qty).toFixed(4)}</Text>
+                    <Pressable style={styles.btnMini} onPress={() => removeRecipeComponent(row.materialId)}><Text style={styles.btnT}>Quitar</Text></Pressable>
+                  </View>
+                </View>
+              ))}
+              <Pressable style={styles.btn} onPress={saveProductionRecipe}><Text style={styles.btnT}>Guardar receta</Text></Pressable>
+              {selectedProductionRecipe ? <Text style={styles.s}>Receta actual para producto seleccionado: rendimiento {num(selectedProductionRecipe.yieldQty).toFixed(2)} unid.</Text> : null}
+            </View>
+
+            <View style={styles.card}>
+              <Text style={styles.t}>Registrar lote de produccion</Text>
+              <Pressable style={styles.i} onPress={() => setShowVisitDatePicker(true)}>
+                <Text style={styles.datePickerText}>{batchForm.date ? `Fecha lote: ${batchForm.date}` : "Seleccionar fecha"}</Text>
+              </Pressable>
+              {showVisitDatePicker && (
+                <DateTimePicker
+                  value={batchForm.date ? new Date(`${batchForm.date}T00:00:00`) : new Date()}
+                  mode="date"
+                  display="default"
+                  onChange={(_event, selectedDate) => {
+                    setShowVisitDatePicker(false);
+                    if (!selectedDate) return;
+                    setBatchForm((p) => ({ ...p, date: selectedDate.toISOString().slice(0, 10) }));
+                  }}
+                />
+              )}
+              <View style={styles.dropdown}>
+                {(data.products || []).map((product) => (
+                  <Pressable
+                    key={`prod_batch_${product.id}`}
+                    style={[styles.dropdownItem, batchForm.productId === product.id && styles.dropdownItemSelected]}
+                    onPress={() => setBatchForm((p) => ({ ...p, productId: product.id }))}
+                  >
+                    <Text style={styles.dropdownTitle}>{product.name}</Text>
+                  </Pressable>
+                ))}
+              </View>
+              <TextInput style={styles.i} placeholder="Cantidad producida (unid)" value={batchForm.outputQty} onChangeText={(t) => setBatchForm((p) => ({ ...p, outputQty: t }))} keyboardType="decimal-pad" />
+              <TextInput style={styles.i} placeholder="Notas" value={batchForm.notes} onChangeText={(t) => setBatchForm((p) => ({ ...p, notes: t }))} />
+              <Pressable style={styles.btn} onPress={saveProductionBatch}><Text style={styles.btnT}>Guardar lote</Text></Pressable>
+              {(data.productionBatches || []).slice(0, 12).map((batch) => (
+                <View key={batch.id} style={styles.itemLine}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.dropdownTitle}>{batch.productName}</Text>
+                    <Text style={styles.dropdownSub}>{batch.date} | {num(batch.outputQty).toFixed(2)} unid</Text>
+                  </View>
+                  <Text style={styles.dropdownSub}>{money(batch.unitCost)}/unid</Text>
+                </View>
+              ))}
+              {(data.productionBatches || []).length === 0 ? <Text style={styles.s}>Sin lotes registrados.</Text> : null}
+            </View>
+          </>
+        )}
+
         {!loading && tab === "vendedores" && !selectedSellerId && (
           <>
             {data.sellerOverview.map((overview) => (
@@ -1928,6 +2207,106 @@ export default function App() {
                 </View>
               ))}
               {selectedSellerOverview.visitHistory.length === 0 ? <Text style={styles.s}>Sin visitas registradas.</Text> : null}
+            </View>
+          </>
+        )}
+
+        {!loading && tab === "ventas" && (
+          <>
+            <View style={styles.card}>
+              <Text style={styles.t}>Ventas (detalle)</Text>
+              <Pressable style={styles.i} onPress={() => setShowSalesDatePicker(true)}>
+                <Text style={styles.datePickerText}>{salesFilters.date ? `Fecha: ${salesFilters.date}` : "Sin filtro de fecha"}</Text>
+              </Pressable>
+              {showSalesDatePicker && (
+                <DateTimePicker
+                  value={salesFilters.date ? new Date(`${salesFilters.date}T00:00:00`) : new Date()}
+                  mode="date"
+                  display="default"
+                  onChange={onChangeSalesDate}
+                />
+              )}
+
+              <View style={styles.selectorShell}>
+                <TextInput
+                  style={styles.selectorInput}
+                  placeholder="Filtrar por cliente"
+                  placeholderTextColor="#9aa0ad"
+                  value={salesClientQuery}
+                  onChangeText={(t) => {
+                    setSalesClientQuery(t);
+                    setSalesFilters((p) => ({ ...p, clientId: "" }));
+                  }}
+                />
+                <Pressable
+                  style={styles.selectorBtn}
+                  onPress={() => {
+                    setSalesClientQuery("");
+                    setSalesFilters((p) => ({ ...p, clientId: "" }));
+                    setShowSalesClientSuggestions(false);
+                  }}
+                >
+                  <Text style={styles.selectorBtnTxt}>X</Text>
+                </Pressable>
+                <Pressable style={styles.selectorBtn} onPress={() => setShowSalesClientSuggestions((p) => !p)}>
+                  <Text style={styles.selectorBtnTxt}>{showSalesClientSuggestions ? "^" : "v"}</Text>
+                </Pressable>
+              </View>
+              {showSalesClientSuggestions && (
+                <View style={styles.dropdown}>
+                  {filteredSalesClientOptions.slice(0, 12).map((client) => (
+                    <Pressable key={client.id} style={styles.dropdownItem} onPress={() => selectSalesClient(client)}>
+                      <Text style={styles.dropdownTitle}>{client.name}</Text>
+                      <Text style={styles.dropdownSub}>{client.internalId || client.id} | {client.buyer || "-"}</Text>
+                    </Pressable>
+                  ))}
+                  {filteredSalesClientOptions.length === 0 ? <Text style={styles.s}>Sin clientes con ese filtro.</Text> : null}
+                </View>
+              )}
+
+              <Text style={styles.s}>Filtrar por vendedor</Text>
+              <View style={styles.tabs}>
+                <Pressable style={[styles.tab, salesFilters.sellerId === "" && styles.tabA]} onPress={() => setSalesFilters((p) => ({ ...p, sellerId: "" }))}><Text style={[styles.tabT, salesFilters.sellerId === "" && styles.tabTA]}>Todos</Text></Pressable>
+                <Pressable style={[styles.tab, salesFilters.sellerId === "admin" && styles.tabA]} onPress={() => setSalesFilters((p) => ({ ...p, sellerId: "admin" }))}><Text style={[styles.tabT, salesFilters.sellerId === "admin" && styles.tabTA]}>Admin</Text></Pressable>
+                {sellers.map((seller) => (
+                  <Pressable key={`sales_seller_${seller.id}`} style={[styles.tab, salesFilters.sellerId === seller.id && styles.tabA]} onPress={() => setSalesFilters((p) => ({ ...p, sellerId: seller.id }))}>
+                    <Text style={[styles.tabT, salesFilters.sellerId === seller.id && styles.tabTA]}>{seller.name}</Text>
+                  </Pressable>
+                ))}
+              </View>
+
+              <Text style={styles.s}>Tipo de venta</Text>
+              <View style={styles.tabs}>
+                <Pressable style={[styles.tab, salesFilters.saleType === "all" && styles.tabA]} onPress={() => setSalesFilters((p) => ({ ...p, saleType: "all" }))}><Text style={[styles.tabT, salesFilters.saleType === "all" && styles.tabTA]}>Todos</Text></Pressable>
+                <Pressable style={[styles.tab, salesFilters.saleType === "a_vista" && styles.tabA]} onPress={() => setSalesFilters((p) => ({ ...p, saleType: "a_vista" }))}><Text style={[styles.tabT, salesFilters.saleType === "a_vista" && styles.tabTA]}>A vista</Text></Pressable>
+                <Pressable style={[styles.tab, salesFilters.saleType === "consignado" && styles.tabA]} onPress={() => setSalesFilters((p) => ({ ...p, saleType: "consignado" }))}><Text style={[styles.tabT, salesFilters.saleType === "consignado" && styles.tabTA]}>Consignado</Text></Pressable>
+                <Pressable style={[styles.tab, salesFilters.saleType === "boleto" && styles.tabA]} onPress={() => setSalesFilters((p) => ({ ...p, saleType: "boleto" }))}><Text style={[styles.tabT, salesFilters.saleType === "boleto" && styles.tabTA]}>Boleto</Text></Pressable>
+              </View>
+
+              <View style={styles.quick}>
+                <Pressable style={styles.copy} onPress={() => { setSalesFilters({ date: today(), clientId: "", sellerId: "", saleType: "all" }); setSalesClientQuery(""); setShowSalesClientSuggestions(false); }}><Text style={styles.copyT}>Hoy</Text></Pressable>
+                <Pressable style={styles.copy} onPress={() => { setSalesFilters({ date: "", clientId: "", sellerId: "", saleType: "all" }); setSalesClientQuery(""); setShowSalesClientSuggestions(false); }}><Text style={styles.copyT}>Limpiar</Text></Pressable>
+              </View>
+            </View>
+
+            <View style={styles.grid}>
+              <View style={[styles.box, { backgroundColor: "#ffe7c8" }]}><Text>Vendido</Text><Text style={styles.big}>{money(salesSummary.totalSales)}</Text></View>
+              <View style={[styles.box, { backgroundColor: "#dff4ef" }]}><Text>Cobrado</Text><Text style={styles.big}>{money(salesSummary.totalCollected)}</Text></View>
+              <View style={[styles.box, { backgroundColor: "#ffe5d9" }]}><Text>Pendiente</Text><Text style={styles.big}>{money(salesSummary.totalPending)}</Text></View>
+            </View>
+
+            <View style={styles.card}>
+              <Text style={styles.t}>Lista de ventas</Text>
+              {salesRows.map((row) => (
+                <View key={`sale_${row.id}`} style={styles.itemLine}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.dropdownTitle}>{row.clientName}</Text>
+                    <Text style={styles.dropdownSub}>{row.date} | {row.saleType} | {row.sellerName}</Text>
+                    <Text style={styles.dropdownSub}>Total: {money(row.totalValue)} | Cobrado: {money(row.amountCollected)} | Pendiente: {money(row.pending)}</Text>
+                  </View>
+                </View>
+              ))}
+              {salesRows.length === 0 ? <Text style={styles.s}>Sin ventas para este filtro.</Text> : null}
             </View>
           </>
         )}
