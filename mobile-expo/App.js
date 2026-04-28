@@ -76,6 +76,14 @@ async function apiPost(path, body) {
   if (!r.ok) throw new Error(j.error || "Error al guardar");
   return j;
 }
+async function apiPut(path, body) {
+  const r = await fetch(`${API_BASE}${path}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const raw = await r.text();
+  let j;
+  try { j = JSON.parse(raw); } catch { j = { error: raw?.slice?.(0, 120) || "Respuesta invalida del servidor" }; }
+  if (!r.ok) throw new Error(j.error || "Error al guardar");
+  return j;
+}
 async function apiDelete(path) {
   const r = await fetch(`${API_BASE}${path}`, { method: "DELETE" });
   const raw = await r.text();
@@ -112,7 +120,7 @@ export default function App() {
   const [showPanelDebtDetails, setShowPanelDebtDetails] = useState(false);
   const [savingMovement, setSavingMovement] = useState(false);
 
-  const [data, setData] = useState({ clients: [], prospects: [], visits: [], sellers: [], sellerOverview: [], appointments: [], products: [], inventory: [], rawMaterials: [], productionRecipes: [], productionBatches: [], productionSummary: { byProduct: [], requiredMaterials: [], averageUnitCostByProduct: [], totalEstimatedBuyCost: 0 }, productGoals: [], clientMovements: [], ownerProductGoalProgress: [], settings: { ownerWeeklyGoal: 0 }, dashboard: { totalSoldThisWeek: 0, totalDebt: 0, clientsNeedingVisit: [], topClients: [], ownerWeeklyGoal: 0, ownerWeeklyRemaining: 0, ownerWeeklyProgressPct: 0 } });
+  const [data, setData] = useState({ clients: [], prospects: [], visits: [], sellers: [], sellerOverview: [], appointments: [], products: [], inventory: [], rawMaterials: [], rawMaterialRestocks: [], productionRecipes: [], productionBatches: [], productionSummary: { byProduct: [], requiredMaterials: [], averageUnitCostByProduct: [], totalEstimatedBuyCost: 0 }, productGoals: [], clientMovements: [], ownerProductGoalProgress: [], settings: { ownerWeeklyGoal: 0 }, dashboard: { totalSoldThisWeek: 0, totalDebt: 0, clientsNeedingVisit: [], topClients: [], ownerWeeklyGoal: 0, ownerWeeklyRemaining: 0, ownerWeeklyProgressPct: 0 } });
 
   const [clientForm, setClientForm] = useState(CLIENT_FORM_INITIAL);
   const [visitForm, setVisitForm] = useState({ date: today(), clientId: "", prospectTradeName: "", prospectBuyerName: "", prospectPhone: "", amountCollected: "", collectionMethod: "efectivo", saleType: "consignado", boletoDays: 7, nextVisitDate: "", notes: "" });
@@ -124,7 +132,7 @@ export default function App() {
   const [visitScheduleClientQuery, setVisitScheduleClientQuery] = useState("");
   const [showVisitScheduleClientSuggestions, setShowVisitScheduleClientSuggestions] = useState(false);
   const [visitFilters, setVisitFilters] = useState({ tradeName: "", buyerName: "", internalId: "", date: "" });
-  const [productForm, setProductForm] = useState({ name: "", unitPrice: "" });
+  const [productForm, setProductForm] = useState({ name: "", unitPrice: "", ownProduction: false });
   const [inventoryForm, setInventoryForm] = useState({ productId: "", productName: "", quantity: "" });
   const [inventorySelectedProductId, setInventorySelectedProductId] = useState("");
   const [inventoryEditQty, setInventoryEditQty] = useState({});
@@ -150,7 +158,11 @@ export default function App() {
   const [sellerStockForm, setSellerStockForm] = useState({ productId: "", productName: "", quantity: "", notes: "" });
   const [sellerClientFilter, setSellerClientFilter] = useState("");
   const [ownerGoalForm, setOwnerGoalForm] = useState({ ownerWeeklyGoal: "" });
-  const [rawMaterialForm, setRawMaterialForm] = useState({ name: "", unit: "kg", stockQty: "", costPerUnit: "" });
+  const [rawMaterialForm, setRawMaterialForm] = useState({ name: "", unit: "kg", stockQty: "", costPerUnit: "", appliesToProductIds: [] });
+  const [rawMaterialProductDraft, setRawMaterialProductDraft] = useState("");
+  const [restockForm, setRestockForm] = useState({ materialId: "", qtyAdded: "", unitCost: "", date: today(), supplier: "", notes: "" });
+  const [productionProductId, setProductionProductId] = useState("");
+  const [productionOpen, setProductionOpen] = useState({ raw: false, recipe: false, cost: false, batch: false });
   const [recipeForm, setRecipeForm] = useState({ productId: "", yieldQty: "" });
   const [recipeComponentDraft, setRecipeComponentDraft] = useState({ materialId: "", qty: "" });
   const [recipeComponents, setRecipeComponents] = useState([]);
@@ -169,7 +181,7 @@ export default function App() {
       setLoading(true);
       setError("");
       const p = await apiGet("/data");
-      setData({ clients: p.clients || [], prospects: p.prospects || [], visits: p.visits || [], sellers: p.sellers || [], sellerOverview: p.sellerOverview || [], appointments: p.appointments || [], products: p.products || [], inventory: p.inventory || [], rawMaterials: p.rawMaterials || [], productionRecipes: p.productionRecipes || [], productionBatches: p.productionBatches || [], productionSummary: p.productionSummary || { byProduct: [], requiredMaterials: [], averageUnitCostByProduct: [], totalEstimatedBuyCost: 0 }, productGoals: p.productGoals || [], clientMovements: p.clientMovements || [], ownerProductGoalProgress: p.ownerProductGoalProgress || [], settings: p.settings || { ownerWeeklyGoal: 0 }, dashboard: p.dashboard || { totalSoldThisWeek: 0, totalDebt: 0, clientsNeedingVisit: [], topClients: [], ownerWeeklyGoal: 0, ownerWeeklyRemaining: 0, ownerWeeklyProgressPct: 0 } });
+      setData({ clients: p.clients || [], prospects: p.prospects || [], visits: p.visits || [], sellers: p.sellers || [], sellerOverview: p.sellerOverview || [], appointments: p.appointments || [], products: p.products || [], inventory: p.inventory || [], rawMaterials: p.rawMaterials || [], rawMaterialRestocks: p.rawMaterialRestocks || [], productionRecipes: p.productionRecipes || [], productionBatches: p.productionBatches || [], productionSummary: p.productionSummary || { byProduct: [], requiredMaterials: [], averageUnitCostByProduct: [], totalEstimatedBuyCost: 0 }, productGoals: p.productGoals || [], clientMovements: p.clientMovements || [], ownerProductGoalProgress: p.ownerProductGoalProgress || [], settings: p.settings || { ownerWeeklyGoal: 0 }, dashboard: p.dashboard || { totalSoldThisWeek: 0, totalDebt: 0, clientsNeedingVisit: [], topClients: [], ownerWeeklyGoal: 0, ownerWeeklyRemaining: 0, ownerWeeklyProgressPct: 0 } });
       setOwnerGoalForm({ ownerWeeklyGoal: String(num((p.settings || {}).ownerWeeklyGoal)) });
     } catch (e) { setError(e.message || "Error"); } finally { setLoading(false); }
   }
@@ -223,6 +235,18 @@ export default function App() {
     if (!productId) return null;
     return (data.productionRecipes || []).find((recipe) => String(recipe.productId || "") === productId) || null;
   }, [data.productionRecipes, recipeForm.productId]);
+  const ownProductionProducts = useMemo(
+    () => (data.products || []).filter((row) => row.active !== false && row.ownProduction === true),
+    [data.products]
+  );
+  const selectedProductionProduct = useMemo(
+    () => ownProductionProducts.find((row) => row.id === productionProductId) || null,
+    [ownProductionProducts, productionProductId]
+  );
+  const selectedProductionSummary = useMemo(
+    () => (data.productionSummary?.byProduct || []).find((row) => String(row.productId || "") === String(productionProductId || "")) || null,
+    [data.productionSummary, productionProductId]
+  );
   const clientVisits = useMemo(() => !selectedClient ? [] : data.visits.filter((v) => v.clientId === selectedClient.id).sort((a, b) => new Date(b.date) - new Date(a.date)), [data.visits, selectedClient]);
   const clientAppts = useMemo(() => !selectedClient ? [] : data.appointments.filter((a) => a.clientId === selectedClient.id && a.status !== "done").sort((a, b) => new Date(a.date) - new Date(b.date)), [data.appointments, selectedClient]);
   const accountSummary = useMemo(() => {
@@ -853,13 +877,23 @@ export default function App() {
   async function addProduct() {
     if (!productForm.name.trim()) return setError("Nombre de producto obligatorio.");
     try {
-      await apiPost("/products", { name: productForm.name.trim(), unitPrice: num(productForm.unitPrice), active: true });
-      setProductForm({ name: "", unitPrice: "" });
+      await apiPost("/products", { name: productForm.name.trim(), unitPrice: num(productForm.unitPrice), ownProduction: productForm.ownProduction === true, active: true });
+      setProductForm({ name: "", unitPrice: "", ownProduction: false });
       setShowProductForm(false);
       await loadAll();
       setToast("Producto creado");
     } catch (e) {
       setError(e.message || "No se pudo crear producto");
+    }
+  }
+
+  async function toggleOwnProduction(product) {
+    try {
+      await apiPut(`/products/${product.id}`, { ownProduction: !(product.ownProduction === true) });
+      await loadAll();
+      setToast("Producto actualizado");
+    } catch (e) {
+      setError(e.message || "No se pudo actualizar producto");
     }
   }
 
@@ -1022,6 +1056,24 @@ export default function App() {
     setRecipeComponents((prev) => prev.filter((row) => row.materialId !== materialId));
   }
 
+  function addRawMaterialProductAssociation() {
+    const productId = String(rawMaterialProductDraft || "").trim();
+    if (!productId) return;
+    setRawMaterialForm((prev) => {
+      const current = Array.isArray(prev.appliesToProductIds) ? prev.appliesToProductIds : [];
+      if (current.includes(productId)) return prev;
+      return { ...prev, appliesToProductIds: [...current, productId] };
+    });
+    setRawMaterialProductDraft("");
+  }
+
+  function removeRawMaterialProductAssociation(productId) {
+    setRawMaterialForm((prev) => ({
+      ...prev,
+      appliesToProductIds: (Array.isArray(prev.appliesToProductIds) ? prev.appliesToProductIds : []).filter((id) => id !== productId)
+    }));
+  }
+
   async function saveRawMaterial() {
     if (!String(rawMaterialForm.name || "").trim()) return setError("Nombre de materia prima obligatorio.");
     try {
@@ -1029,13 +1081,34 @@ export default function App() {
         name: rawMaterialForm.name,
         unit: rawMaterialForm.unit || "kg",
         stockQty: num(rawMaterialForm.stockQty),
-        costPerUnit: num(rawMaterialForm.costPerUnit)
+        costPerUnit: num(rawMaterialForm.costPerUnit),
+        appliesToProductIds: Array.isArray(rawMaterialForm.appliesToProductIds) ? rawMaterialForm.appliesToProductIds : []
       });
-      setRawMaterialForm({ name: "", unit: "kg", stockQty: "", costPerUnit: "" });
+      setRawMaterialForm({ name: "", unit: "kg", stockQty: "", costPerUnit: "", appliesToProductIds: [] });
+      setRawMaterialProductDraft("");
       await loadAll();
       setToast("Materia prima guardada");
     } catch (e) {
       setError(e.message || "No se pudo guardar materia prima");
+    }
+  }
+
+  async function saveRawMaterialRestock() {
+    if (!restockForm.materialId) return setError("Selecciona materia prima.");
+    if (num(restockForm.qtyAdded) <= 0) return setError("La cantidad debe ser mayor a 0.");
+    try {
+      await apiPost(`/production/raw-materials/${restockForm.materialId}/restock`, {
+        qtyAdded: num(restockForm.qtyAdded),
+        unitCost: num(restockForm.unitCost),
+        date: restockForm.date || today(),
+        supplier: restockForm.supplier || "",
+        notes: restockForm.notes || ""
+      });
+      setRestockForm({ materialId: "", qtyAdded: "", unitCost: "", date: today(), supplier: "", notes: "" });
+      await loadAll();
+      setToast("Recarga guardada");
+    } catch (e) {
+      setError(e.message || "No se pudo guardar recarga");
     }
   }
 
@@ -1852,6 +1925,8 @@ export default function App() {
                 <Text style={styles.t}>{product.name}</Text>
                 <Text style={styles.s}>Precio sugerido: {num(product.unitPrice).toFixed(2)}</Text>
                 <Text style={styles.s}>Estado: {product.active === false ? "Inactivo" : "Activo"}</Text>
+                <Text style={styles.s}>Produccion propia: {product.ownProduction ? "Si" : "No"}</Text>
+                <Pressable style={styles.copy} onPress={() => toggleOwnProduction(product)}><Text style={styles.copyT}>{product.ownProduction ? "Quitar produccion propia" : "Marcar produccion propia"}</Text></Pressable>
               </View>
             ))}
           {data.products.length === 0 ? <View style={styles.card}><Text style={styles.s}>Aun no hay productos.</Text></View> : null}
@@ -1860,6 +1935,7 @@ export default function App() {
               <Text style={styles.t}>Nuevo producto</Text>
               <TextInput style={styles.i} placeholder="Nombre del producto" value={productForm.name} onChangeText={(t) => setProductForm((p) => ({ ...p, name: t }))} />
               <TextInput style={styles.i} placeholder="Precio sugerido" value={productForm.unitPrice} onChangeText={(t) => setProductForm((p) => ({ ...p, unitPrice: t }))} />
+              <Pressable style={styles.copy} onPress={() => setProductForm((p) => ({ ...p, ownProduction: !p.ownProduction }))}><Text style={styles.copyT}>{productForm.ownProduction ? "Produccion propia: SI" : "Produccion propia: NO"}</Text></Pressable>
               <Pressable style={styles.btn} onPress={addProduct}><Text style={styles.btnT}>Guardar producto</Text></Pressable>
             </View>
           )}
@@ -1946,41 +2022,130 @@ export default function App() {
         {!loading && tab === "produccion" && (
           <>
             <View style={styles.card}>
-              <Text style={styles.t}>Produccion sugerida (semana)</Text>
-              {(data.productionSummary?.byProduct || []).map((row) => (
-                <View key={`prod_sug_${row.productId || row.productName}`} style={styles.itemLine}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.dropdownTitle}>{row.productName}</Text>
-                    <Text style={styles.dropdownSub}>Demanda: {num(row.weekDemandQty).toFixed(2)} unid | Stock: {num(row.currentStock).toFixed(2)} unid</Text>
-                    <Text style={styles.dropdownSub}>Receta: {row.hasRecipe ? "Si" : "No"}</Text>
-                  </View>
-                  <Text style={styles.dropdownTitle}>Producir: {num(row.suggestedProduction).toFixed(2)}</Text>
+              <Text style={styles.t}>Producto de produccion propia</Text>
+              <View style={styles.dropdown}>
+                {ownProductionProducts.map((product) => (
+                  <Pressable
+                    key={`own_production_${product.id}`}
+                    style={[styles.dropdownItem, productionProductId === product.id && styles.dropdownItemSelected]}
+                    onPress={() => {
+                      setProductionProductId(product.id);
+                      setRecipeForm((p) => ({ ...p, productId: product.id }));
+                      setBatchForm((p) => ({ ...p, productId: product.id }));
+                      setProductionOpen({ raw: false, recipe: false, cost: false, batch: false });
+                    }}
+                  >
+                    <Text style={styles.dropdownTitle}>{product.name}</Text>
+                  </Pressable>
+                ))}
+              </View>
+              {!selectedProductionProduct ? <Text style={styles.s}>Selecciona un producto propio para ver sus datos de produccion.</Text> : <>
+                <Text style={styles.s}>Sugerencia semanal</Text>
+                <Text style={styles.big}>{num(selectedProductionSummary?.suggestedProduction || 0).toFixed(2)} unid</Text>
+                <Text style={styles.s}>Demanda: {num(selectedProductionSummary?.weekDemandQty || 0).toFixed(2)} | Stock: {num(selectedProductionSummary?.currentStock || 0).toFixed(2)}</Text>
+                <View style={styles.tabs}>
+                  <Pressable style={[styles.tab, productionOpen.raw && styles.tabA]} onPress={() => setProductionOpen((s) => ({ ...s, raw: !s.raw }))}><Text style={[styles.tabT, productionOpen.raw && styles.tabTA]}>Materia prima</Text></Pressable>
+                  <Pressable style={[styles.tab, productionOpen.recipe && styles.tabA]} onPress={() => setProductionOpen((s) => ({ ...s, recipe: !s.recipe }))}><Text style={[styles.tabT, productionOpen.recipe && styles.tabTA]}>Receta</Text></Pressable>
+                  <Pressable style={[styles.tab, productionOpen.cost && styles.tabA]} onPress={() => setProductionOpen((s) => ({ ...s, cost: !s.cost }))}><Text style={[styles.tabT, productionOpen.cost && styles.tabTA]}>Costos</Text></Pressable>
+                  <Pressable style={[styles.tab, productionOpen.batch && styles.tabA]} onPress={() => setProductionOpen((s) => ({ ...s, batch: !s.batch }))}><Text style={[styles.tabT, productionOpen.batch && styles.tabTA]}>Lote</Text></Pressable>
                 </View>
-              ))}
-              {(data.productionSummary?.byProduct || []).length === 0 ? <Text style={styles.s}>Sin demanda semanal aun.</Text> : null}
+              </>}
             </View>
 
-            <View style={styles.grid}>
+            {selectedProductionProduct ? <View style={styles.grid}>
               <View style={[styles.box, { backgroundColor: "#ffe7c8" }]}><Text>Compra MP sugerida</Text><Text style={styles.big}>{money(num(data.productionSummary?.totalEstimatedBuyCost))}</Text></View>
-            </View>
+            </View> : null}
 
-            <View style={styles.card}>
-              <Text style={styles.t}>Materia prima</Text>
+            {selectedProductionProduct && productionOpen.raw ? <View style={styles.card}>
+              <Text style={styles.t}>Nueva materia prima</Text>
               <TextInput style={styles.i} placeholder="Nombre materia prima" value={rawMaterialForm.name} onChangeText={(t) => setRawMaterialForm((p) => ({ ...p, name: t }))} />
               <TextInput style={styles.i} placeholder="Unidad (kg, L, unid)" value={rawMaterialForm.unit} onChangeText={(t) => setRawMaterialForm((p) => ({ ...p, unit: t }))} />
-              <TextInput style={styles.i} placeholder="Stock actual" value={rawMaterialForm.stockQty} onChangeText={(t) => setRawMaterialForm((p) => ({ ...p, stockQty: t }))} keyboardType="decimal-pad" />
-              <TextInput style={styles.i} placeholder="Costo por unidad (R$)" value={rawMaterialForm.costPerUnit} onChangeText={(t) => setRawMaterialForm((p) => ({ ...p, costPerUnit: t }))} keyboardType="decimal-pad" />
+              <TextInput style={styles.i} placeholder="Stock inicial" value={rawMaterialForm.stockQty} onChangeText={(t) => setRawMaterialForm((p) => ({ ...p, stockQty: t }))} keyboardType="decimal-pad" />
+              <TextInput style={styles.i} placeholder="Costo inicial por unidad (R$)" value={rawMaterialForm.costPerUnit} onChangeText={(t) => setRawMaterialForm((p) => ({ ...p, costPerUnit: t }))} keyboardType="decimal-pad" />
+              <Text style={styles.s}>Asociar a producto</Text>
+              <View style={styles.dropdown}>
+                {(data.products || []).map((product) => (
+                  <Pressable
+                    key={`raw_product_${product.id}`}
+                    style={[styles.dropdownItem, rawMaterialProductDraft === product.id && styles.dropdownItemSelected]}
+                    onPress={() => setRawMaterialProductDraft(product.id)}
+                  >
+                    <Text style={styles.dropdownTitle}>{product.name}</Text>
+                  </Pressable>
+                ))}
+              </View>
+              <Pressable style={styles.copy} onPress={addRawMaterialProductAssociation}><Text style={styles.copyT}>Asociar producto</Text></Pressable>
+              {(rawMaterialForm.appliesToProductIds || []).map((productId) => {
+                const productName = (data.products || []).find((p) => p.id === productId)?.name || productId;
+                return (
+                  <View key={`raw_association_${productId}`} style={styles.itemLine}>
+                    <Text style={styles.dropdownTitle}>{productName}</Text>
+                    <Pressable style={styles.btnMini} onPress={() => removeRawMaterialProductAssociation(productId)}><Text style={styles.btnT}>Quitar</Text></Pressable>
+                  </View>
+                );
+              })}
               <Pressable style={styles.btn} onPress={saveRawMaterial}><Text style={styles.btnT}>Guardar materia prima</Text></Pressable>
               {(data.rawMaterials || []).map((row) => (
                 <View key={row.id} style={styles.itemLine}>
-                  <Text style={styles.dropdownTitle}>{row.name} ({row.unit})</Text>
-                  <Text style={styles.dropdownSub}>{num(row.stockQty).toFixed(2)} | {money(row.costPerUnit)}</Text>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.dropdownTitle}>{row.name} ({row.unit})</Text>
+                    <Text style={styles.dropdownSub}>Stock: {num(row.stockQty).toFixed(2)} | Costo prom: {money(row.costPerUnit)}</Text>
+                    <Text style={styles.dropdownSub}>
+                      Productos: {(row.appliesToProductIds || []).map((id) => (data.products || []).find((p) => p.id === id)?.name || id).join(", ") || "Sin asociar"}
+                    </Text>
+                  </View>
                 </View>
               ))}
               {(data.rawMaterials || []).length === 0 ? <Text style={styles.s}>Sin materias primas cargadas.</Text> : null}
-            </View>
+            </View> : null}
 
-            <View style={styles.card}>
+            {selectedProductionProduct && productionOpen.raw ? <View style={styles.card}>
+              <Text style={styles.t}>Recargar materia prima</Text>
+              <View style={styles.dropdown}>
+                {(data.rawMaterials || []).map((row) => (
+                  <Pressable
+                    key={`restock_material_${row.id}`}
+                    style={[styles.dropdownItem, restockForm.materialId === row.id && styles.dropdownItemSelected]}
+                    onPress={() => setRestockForm((p) => ({ ...p, materialId: row.id }))}
+                  >
+                    <Text style={styles.dropdownTitle}>{row.name}</Text>
+                  </Pressable>
+                ))}
+              </View>
+              <Pressable style={styles.i} onPress={() => setShowScheduleDatePicker(true)}>
+                <Text style={styles.datePickerText}>{restockForm.date ? `Fecha recarga: ${restockForm.date}` : "Seleccionar fecha"}</Text>
+              </Pressable>
+              {showScheduleDatePicker && (
+                <DateTimePicker
+                  value={restockForm.date ? new Date(`${restockForm.date}T00:00:00`) : new Date()}
+                  mode="date"
+                  display="default"
+                  onChange={(_event, selectedDate) => {
+                    setShowScheduleDatePicker(false);
+                    if (!selectedDate) return;
+                    setRestockForm((p) => ({ ...p, date: selectedDate.toISOString().slice(0, 10) }));
+                  }}
+                />
+              )}
+              <TextInput style={styles.i} placeholder="Cantidad recargada" value={restockForm.qtyAdded} onChangeText={(t) => setRestockForm((p) => ({ ...p, qtyAdded: t }))} keyboardType="decimal-pad" />
+              <TextInput style={styles.i} placeholder="Costo por unidad (R$)" value={restockForm.unitCost} onChangeText={(t) => setRestockForm((p) => ({ ...p, unitCost: t }))} keyboardType="decimal-pad" />
+              <TextInput style={styles.i} placeholder="Proveedor" value={restockForm.supplier} onChangeText={(t) => setRestockForm((p) => ({ ...p, supplier: t }))} />
+              <TextInput style={styles.i} placeholder="Notas" value={restockForm.notes} onChangeText={(t) => setRestockForm((p) => ({ ...p, notes: t }))} />
+              <Pressable style={styles.btn} onPress={saveRawMaterialRestock}><Text style={styles.btnT}>Guardar recarga</Text></Pressable>
+              {(data.rawMaterialRestocks || []).slice(0, 20).map((row) => (
+                <View key={row.id} style={styles.itemLine}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.dropdownTitle}>{row.materialName} ({fmt(row.date)})</Text>
+                    <Text style={styles.dropdownSub}>+{num(row.qtyAdded).toFixed(2)} {row.unit} | {money(row.unitCost)}</Text>
+                    <Text style={styles.dropdownSub}>Stock: {num(row.previousStockQty).toFixed(2)} -> {num(row.newStockQty).toFixed(2)}</Text>
+                  </View>
+                  <Text style={styles.dropdownSub}>{money(row.totalCost)}</Text>
+                </View>
+              ))}
+              {(data.rawMaterialRestocks || []).length === 0 ? <Text style={styles.s}>Sin recargas registradas.</Text> : null}
+            </View> : null}
+
+            {selectedProductionProduct && productionOpen.recipe ? <View style={styles.card}>
               <Text style={styles.t}>Receta por producto</Text>
               <View style={styles.dropdown}>
                 {(data.products || []).map((product) => (
@@ -2019,9 +2184,9 @@ export default function App() {
               ))}
               <Pressable style={styles.btn} onPress={saveProductionRecipe}><Text style={styles.btnT}>Guardar receta</Text></Pressable>
               {selectedProductionRecipe ? <Text style={styles.s}>Receta actual para producto seleccionado: rendimiento {num(selectedProductionRecipe.yieldQty).toFixed(2)} unid.</Text> : null}
-            </View>
+            </View> : null}
 
-            <View style={styles.card}>
+            {selectedProductionProduct && productionOpen.batch ? <View style={styles.card}>
               <Text style={styles.t}>Registrar lote de produccion</Text>
               <Pressable style={styles.i} onPress={() => setShowVisitDatePicker(true)}>
                 <Text style={styles.datePickerText}>{batchForm.date ? `Fecha lote: ${batchForm.date}` : "Seleccionar fecha"}</Text>
@@ -2062,7 +2227,20 @@ export default function App() {
                 </View>
               ))}
               {(data.productionBatches || []).length === 0 ? <Text style={styles.s}>Sin lotes registrados.</Text> : null}
-            </View>
+            </View> : null}
+
+            {selectedProductionProduct && productionOpen.cost ? <View style={styles.card}>
+              <Text style={styles.t}>Costos de produccion</Text>
+              {(data.productionSummary?.averageUnitCostByProduct || [])
+                .filter((row) => String(row.productId || "") === selectedProductionProduct.id)
+                .map((row) => (
+                  <View key={`prod_cost_${row.productId || row.productName}`} style={styles.itemLine}>
+                    <Text style={styles.dropdownTitle}>{row.productName}</Text>
+                    <Text style={styles.dropdownSub}>{money(num(row.avgUnitCost))}/unid</Text>
+                  </View>
+                ))}
+              {(data.productionSummary?.averageUnitCostByProduct || []).filter((row) => String(row.productId || "") === selectedProductionProduct.id).length === 0 ? <Text style={styles.s}>Aun sin costo promedio para este producto.</Text> : null}
+            </View> : null}
           </>
         )}
 

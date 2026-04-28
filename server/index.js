@@ -221,6 +221,7 @@ function normalizeProduct(rawProduct = {}) {
     id: String(rawProduct.id || uid("product")).trim(),
     name: String(rawProduct.name || "").trim(),
     unitPrice: parseNumber(rawProduct.unitPrice),
+    ownProduction: rawProduct.ownProduction === true,
     active: rawProduct.active !== false,
     createdAt: String(rawProduct.createdAt || new Date().toISOString())
   };
@@ -315,13 +316,40 @@ function normalizeProductGoal(rawGoal = {}) {
 }
 
 function normalizeRawMaterial(rawMaterial = {}) {
+  const appliesToProductIds = Array.isArray(rawMaterial.appliesToProductIds)
+    ? rawMaterial.appliesToProductIds
+        .map((id) => String(id || "").trim())
+        .filter(Boolean)
+    : [];
   return {
     id: String(rawMaterial.id || uid("raw")).trim(),
     name: String(rawMaterial.name || "").trim(),
     unit: String(rawMaterial.unit || "kg").trim(),
     stockQty: Math.max(0, parseNumber(rawMaterial.stockQty)),
     costPerUnit: Math.max(0, parseNumber(rawMaterial.costPerUnit)),
+    appliesToProductIds,
+    lastRestockAt: String(rawMaterial.lastRestockAt || rawMaterial.updatedAt || nowIso()),
     updatedAt: String(rawMaterial.updatedAt || nowIso())
+  };
+}
+
+function normalizeRawMaterialRestock(rawRestock = {}) {
+  return {
+    id: String(rawRestock.id || uid("raw_restock")).trim(),
+    materialId: String(rawRestock.materialId || "").trim(),
+    materialName: String(rawRestock.materialName || "").trim(),
+    date: String(rawRestock.date || localDateIso()).trim(),
+    qtyAdded: Math.max(0, parseNumber(rawRestock.qtyAdded)),
+    unit: String(rawRestock.unit || "").trim(),
+    unitCost: Math.max(0, parseNumber(rawRestock.unitCost)),
+    totalCost: Math.max(0, parseNumber(rawRestock.totalCost)),
+    previousStockQty: Math.max(0, parseNumber(rawRestock.previousStockQty)),
+    newStockQty: Math.max(0, parseNumber(rawRestock.newStockQty)),
+    previousCostPerUnit: Math.max(0, parseNumber(rawRestock.previousCostPerUnit)),
+    newCostPerUnit: Math.max(0, parseNumber(rawRestock.newCostPerUnit)),
+    supplier: String(rawRestock.supplier || "").trim(),
+    notes: String(rawRestock.notes || "").trim(),
+    createdAt: String(rawRestock.createdAt || nowIso())
   };
 }
 
@@ -623,7 +651,7 @@ function ensureDailyClosures(data) {
 
 function readDb() {
   if (!fs.existsSync(dbPath)) {
-    fs.writeFileSync(dbPath, JSON.stringify({ clients: [], prospects: [], visits: [], sellers: [], sellerUsers: [], sellerSessions: [], appointments: [], products: [], sellerStocks: [], inventory: [], productGoals: [], clientMovements: [], dailyClosures: [], rawMaterials: [], productionRecipes: [], productionBatches: [], settings: { ownerWeeklyGoal: 0, lastAutoBackupDate: "" } }, null, 2));
+    fs.writeFileSync(dbPath, JSON.stringify({ clients: [], prospects: [], visits: [], sellers: [], sellerUsers: [], sellerSessions: [], appointments: [], products: [], sellerStocks: [], inventory: [], productGoals: [], clientMovements: [], dailyClosures: [], rawMaterials: [], rawMaterialRestocks: [], productionRecipes: [], productionBatches: [], settings: { ownerWeeklyGoal: 0, lastAutoBackupDate: "" } }, null, 2));
   }
 
   const raw = fs.readFileSync(dbPath, "utf-8");
@@ -644,6 +672,7 @@ function readDb() {
     clientMovements: Array.isArray(parsed.clientMovements) ? parsed.clientMovements.map(normalizeClientMovement) : [],
     dailyClosures: Array.isArray(parsed.dailyClosures) ? parsed.dailyClosures : [],
     rawMaterials: Array.isArray(parsed.rawMaterials) ? parsed.rawMaterials.map(normalizeRawMaterial) : [],
+    rawMaterialRestocks: Array.isArray(parsed.rawMaterialRestocks) ? parsed.rawMaterialRestocks.map(normalizeRawMaterialRestock) : [],
     productionRecipes: Array.isArray(parsed.productionRecipes) ? parsed.productionRecipes.map(normalizeProductionRecipe) : [],
     productionBatches: Array.isArray(parsed.productionBatches) ? parsed.productionBatches.map(normalizeProductionBatch) : [],
     settings:
@@ -1222,6 +1251,7 @@ app.post("/api/system/db-import", (req, res) => {
     clientMovements: Array.isArray(payload.clientMovements) ? payload.clientMovements : [],
     dailyClosures: Array.isArray(payload.dailyClosures) ? payload.dailyClosures : [],
     rawMaterials: Array.isArray(payload.rawMaterials) ? payload.rawMaterials : [],
+    rawMaterialRestocks: Array.isArray(payload.rawMaterialRestocks) ? payload.rawMaterialRestocks : [],
     productionRecipes: Array.isArray(payload.productionRecipes) ? payload.productionRecipes : [],
     productionBatches: Array.isArray(payload.productionBatches) ? payload.productionBatches : [],
     settings: typeof payload.settings === "object" && payload.settings ? payload.settings : { ownerWeeklyGoal: 0, lastAutoBackupDate: "" }
@@ -1323,6 +1353,7 @@ app.get("/api/data", (_req, res) => {
     products: data.products.map(normalizeProduct),
     inventory: (data.inventory || []).map(normalizeInventoryItem),
     rawMaterials: (data.rawMaterials || []).map(normalizeRawMaterial),
+    rawMaterialRestocks: (data.rawMaterialRestocks || []).map(normalizeRawMaterialRestock).sort((a, b) => new Date(`${b.date}T00:00:00`) - new Date(`${a.date}T00:00:00`)),
     productionRecipes: (data.productionRecipes || []).map(normalizeProductionRecipe),
     productionBatches: (data.productionBatches || []).map(normalizeProductionBatch).sort((a, b) => new Date(b.date) - new Date(a.date)),
     productionSummary: computeProductionSummary(data),
@@ -1359,6 +1390,7 @@ app.post("/api/products", (req, res) => {
     id: uid("product"),
     name: body.name,
     unitPrice: body.unitPrice,
+    ownProduction: body.ownProduction === true,
     active: body.active !== false
   });
 
@@ -1372,6 +1404,37 @@ app.post("/api/products", (req, res) => {
   data.products.unshift(product);
   writeDb(data);
   return res.status(201).json(product);
+});
+
+app.put("/api/products/:id", (req, res) => {
+  const id = String(req.params.id || "").trim();
+  if (!id) return res.status(400).json({ error: "ID invalido." });
+
+  const data = readDb();
+  const products = (data.products || []).map(normalizeProduct);
+  const product = products.find((row) => row.id === id);
+  if (!product) return res.status(404).json({ error: "Producto no encontrado." });
+
+  if (req.body?.name !== undefined) {
+    const nextName = String(req.body?.name || "").trim();
+    if (!nextName) return res.status(400).json({ error: "El nombre del producto es obligatorio." });
+    const duplicate = products.find((row) => row.id !== id && String(row.name || "").trim().toLowerCase() === nextName.toLowerCase());
+    if (duplicate) return res.status(409).json({ error: "Ya existe un producto con ese nombre." });
+    product.name = nextName;
+  }
+  if (req.body?.unitPrice !== undefined) {
+    product.unitPrice = Math.max(0, parseNumber(req.body?.unitPrice));
+  }
+  if (req.body?.ownProduction !== undefined) {
+    product.ownProduction = req.body?.ownProduction === true;
+  }
+  if (req.body?.active !== undefined) {
+    product.active = req.body?.active !== false;
+  }
+
+  data.products = products;
+  writeDb(data);
+  return res.status(200).json({ ok: true, product });
 });
 
 app.get("/api/inventory", (_req, res) => {
@@ -1453,6 +1516,7 @@ app.get("/api/production", (_req, res) => {
   const data = readDb();
   return res.status(200).json({
     rawMaterials: (data.rawMaterials || []).map(normalizeRawMaterial),
+    rawMaterialRestocks: (data.rawMaterialRestocks || []).map(normalizeRawMaterialRestock).sort((a, b) => new Date(`${b.date}T00:00:00`) - new Date(`${a.date}T00:00:00`)),
     productionRecipes: (data.productionRecipes || []).map(normalizeProductionRecipe),
     productionBatches: (data.productionBatches || []).map(normalizeProductionBatch).sort((a, b) => new Date(b.date) - new Date(a.date)),
     productionSummary: computeProductionSummary(data)
@@ -1468,6 +1532,8 @@ app.post("/api/production/raw-materials", (req, res) => {
     unit: body.unit,
     stockQty: body.stockQty,
     costPerUnit: body.costPerUnit,
+    appliesToProductIds: body.appliesToProductIds,
+    lastRestockAt: nowIso(),
     updatedAt: nowIso()
   });
   if (!material.name) return res.status(400).json({ error: "Nombre de materia prima obligatorio." });
@@ -1475,13 +1541,9 @@ app.post("/api/production/raw-materials", (req, res) => {
   const materials = (data.rawMaterials || []).map(normalizeRawMaterial);
   const current = materials.find((row) => String(row.name || "").trim().toLowerCase() === material.name.toLowerCase());
   if (current) {
-    current.unit = material.unit || current.unit;
-    current.stockQty = material.stockQty;
-    current.costPerUnit = material.costPerUnit;
-    current.updatedAt = nowIso();
-  } else {
-    materials.unshift(material);
+    return res.status(409).json({ error: "La materia prima ya existe. Usa la opcion de recarga para aumentar stock." });
   }
+  materials.unshift(material);
   data.rawMaterials = materials;
   writeDb(data);
   return res.status(201).json({ ok: true, rawMaterials: data.rawMaterials });
@@ -1500,10 +1562,72 @@ app.put("/api/production/raw-materials/:id", (req, res) => {
   current.unit = String(req.body?.unit ?? current.unit).trim() || current.unit;
   current.stockQty = Math.max(0, parseNumber(req.body?.stockQty ?? current.stockQty));
   current.costPerUnit = Math.max(0, parseNumber(req.body?.costPerUnit ?? current.costPerUnit));
+  current.appliesToProductIds = Array.isArray(req.body?.appliesToProductIds)
+    ? req.body.appliesToProductIds.map((value) => String(value || "").trim()).filter(Boolean)
+    : current.appliesToProductIds;
   current.updatedAt = nowIso();
   data.rawMaterials = materials;
   writeDb(data);
   return res.status(200).json({ ok: true, material: current });
+});
+
+app.post("/api/production/raw-materials/:id/restock", (req, res) => {
+  const id = String(req.params.id || "").trim();
+  if (!id) return res.status(400).json({ error: "ID invalido." });
+
+  const qtyAdded = Math.max(0, parseNumber(req.body?.qtyAdded));
+  const unitCost = Math.max(0, parseNumber(req.body?.unitCost));
+  const date = String(req.body?.date || localDateIso()).trim();
+  const supplier = String(req.body?.supplier || "").trim();
+  const notes = String(req.body?.notes || "").trim();
+  if (qtyAdded <= 0) return res.status(400).json({ error: "La cantidad de recarga debe ser mayor que cero." });
+
+  const data = readDb();
+  const materials = (data.rawMaterials || []).map(normalizeRawMaterial);
+  const material = materials.find((row) => row.id === id);
+  if (!material) return res.status(404).json({ error: "Materia prima no encontrada." });
+
+  const previousStockQty = Math.max(0, parseNumber(material.stockQty));
+  const previousCostPerUnit = Math.max(0, parseNumber(material.costPerUnit));
+  const newStockQty = previousStockQty + qtyAdded;
+
+  let newCostPerUnit = previousCostPerUnit;
+  if (newStockQty > 0) {
+    const previousTotalCost = previousStockQty * previousCostPerUnit;
+    const addedTotalCost = qtyAdded * unitCost;
+    newCostPerUnit = (previousTotalCost + addedTotalCost) / newStockQty;
+  }
+
+  material.stockQty = newStockQty;
+  material.costPerUnit = newCostPerUnit;
+  material.lastRestockAt = nowIso();
+  material.updatedAt = nowIso();
+
+  const restocks = (data.rawMaterialRestocks || []).map(normalizeRawMaterialRestock);
+  restocks.unshift(
+    normalizeRawMaterialRestock({
+      id: uid("raw_restock"),
+      materialId: material.id,
+      materialName: material.name,
+      date,
+      qtyAdded,
+      unit: material.unit,
+      unitCost,
+      totalCost: qtyAdded * unitCost,
+      previousStockQty,
+      newStockQty,
+      previousCostPerUnit,
+      newCostPerUnit,
+      supplier,
+      notes,
+      createdAt: nowIso()
+    })
+  );
+
+  data.rawMaterials = materials;
+  data.rawMaterialRestocks = restocks;
+  writeDb(data);
+  return res.status(201).json({ ok: true, material, lastRestock: restocks[0] });
 });
 
 app.post("/api/production/recipes", (req, res) => {
