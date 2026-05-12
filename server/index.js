@@ -380,6 +380,7 @@ function normalizeProductionBatch(rawBatch = {}) {
         materialId: String(row?.materialId || "").trim(),
         materialName: String(row?.materialName || "").trim(),
         qty: Math.max(0, parseNumber(row?.qty)),
+        expectedQty: Math.max(0, parseNumber(row?.expectedQty)),
         unit: String(row?.unit || "").trim(),
         costPerUnit: Math.max(0, parseNumber(row?.costPerUnit)),
         totalCost: Math.max(0, parseNumber(row?.totalCost))
@@ -394,6 +395,8 @@ function normalizeProductionBatch(rawBatch = {}) {
     outputQty: Math.max(0, parseNumber(rawBatch.outputQty)),
     totalCost: Math.max(0, parseNumber(rawBatch.totalCost)),
     unitCost: Math.max(0, parseNumber(rawBatch.unitCost)),
+    recipeExpectedOutputQty: Math.max(0, parseNumber(rawBatch.recipeExpectedOutputQty)),
+    yieldDeviationPct: parseNumber(rawBatch.yieldDeviationPct),
     notes: String(rawBatch.notes || "").trim(),
     materialsUsed,
     createdAt: String(rawBatch.createdAt || nowIso())
@@ -861,6 +864,21 @@ function getCollectionMethod(visit) {
   if (String(visit.saleType || "") === "boleto") return "boleto";
   if (String(visit.saleType || "") === "a_vista") return "efectivo";
   return "pendiente";
+}
+
+function findStockByProduct(stocks, line, sellerId) {
+  const safeStocks = Array.isArray(stocks) ? stocks : [];
+  const productId = String(line?.productId || "").trim();
+  const productName = String(line?.productName || "").trim().toLowerCase();
+  const owner = String(sellerId || "").trim();
+
+  return safeStocks.find((row) => {
+    if (String(row?.sellerId || "").trim() !== owner) return false;
+    const rowProductId = String(row?.productId || "").trim();
+    const rowProductName = String(row?.productName || "").trim().toLowerCase();
+    if (productId && rowProductId === productId) return true;
+    return !!productName && rowProductName === productName;
+  });
 }
 
 function computeSellersOverview(data, sellers) {
@@ -1686,30 +1704,56 @@ app.post("/api/production/batches", (req, res) => {
 
   const materials = (data.rawMaterials || []).map(normalizeRawMaterial);
   const factor = outputQty / Math.max(0.0001, parseNumber(recipe.yieldQty));
+  const recipeExpectedUsage = recipe.components.map((component) => ({
+    materialId: component.materialId,
+    materialName: component.materialName,
+    expectedQty: parseNumber(component.qty) * factor
+  }));
+
+  const inputRows = Array.isArray(body.materialsUsed)
+    ? body.materialsUsed
+        .map((row) => ({
+          materialId: String(row?.materialId || "").trim(),
+          qty: Math.max(0, parseNumber(row?.qty))
+        }))
+        .filter((row) => row.materialId && row.qty > 0)
+    : [];
+  const useExplicitInput = inputRows.length > 0;
   const materialsUsed = [];
-  for (const component of recipe.components) {
-    const material = materials.find((row) => row.id === component.materialId);
-    if (!material) return res.status(400).json({ error: `Materia prima no encontrada en receta: ${component.materialName}` });
-    const requiredQty = parseNumber(component.qty) * factor;
-    if (parseNumber(material.stockQty) < requiredQty) {
+
+  const usageRows = useExplicitInput
+    ? inputRows
+    : recipeExpectedUsage.map((row) => ({ materialId: row.materialId, qty: row.expectedQty }));
+
+  for (const usage of usageRows) {
+    const material = materials.find((row) => row.id === usage.materialId);
+    if (!material) return res.status(400).json({ error: `Materia prima no encontrada: ${usage.materialId}` });
+    if (parseNumber(material.stockQty) < usage.qty) {
       return res.status(400).json({
-        error: `Stock insuficiente de materia prima: ${material.name}. Disponible ${parseNumber(material.stockQty).toFixed(2)} ${material.unit}, requerido ${requiredQty.toFixed(2)} ${material.unit}.`
+        error: `Stock insuficiente de materia prima: ${material.name}. Disponible ${parseNumber(material.stockQty).toFixed(2)} ${material.unit}, requerido ${usage.qty.toFixed(2)} ${material.unit}.`
       });
     }
-    material.stockQty = Math.max(0, parseNumber(material.stockQty) - requiredQty);
+    material.stockQty = Math.max(0, parseNumber(material.stockQty) - usage.qty);
     material.updatedAt = nowIso();
+    const expected = recipeExpectedUsage.find((row) => row.materialId === material.id);
     materialsUsed.push({
       materialId: material.id,
       materialName: material.name,
-      qty: requiredQty,
+      qty: usage.qty,
+      expectedQty: parseNumber(expected?.expectedQty || 0),
       unit: material.unit,
       costPerUnit: parseNumber(material.costPerUnit),
-      totalCost: requiredQty * parseNumber(material.costPerUnit)
+      totalCost: usage.qty * parseNumber(material.costPerUnit)
     });
   }
 
   const totalCost = materialsUsed.reduce((acc, row) => acc + parseNumber(row.totalCost), 0);
   const unitCost = outputQty > 0 ? totalCost / outputQty : 0;
+  const recipeExpectedOutputQty = parseNumber(recipe.yieldQty);
+  const yieldDeviationPct =
+    recipeExpectedOutputQty > 0
+      ? ((outputQty - recipeExpectedOutputQty) / recipeExpectedOutputQty) * 100
+      : 0;
   const batch = normalizeProductionBatch({
     id: uid("batch"),
     date,
@@ -1718,6 +1762,8 @@ app.post("/api/production/batches", (req, res) => {
     outputQty,
     totalCost,
     unitCost,
+    recipeExpectedOutputQty,
+    yieldDeviationPct,
     notes: String(body.notes || "").trim(),
     materialsUsed,
     createdAt: nowIso()
