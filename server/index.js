@@ -2253,33 +2253,7 @@ app.post("/api/seller-app/stock", (req, res) => {
   const data = readDb();
   const ctx = getSellerAuthContext(data, req);
   if (!ctx) return res.status(401).json({ error: "Sesion invalida. Inicia sesion nuevamente." });
-  const sellerId = ctx.seller.id;
-  const productId = String(req.body?.productId || "").trim();
-  const productName = String(req.body?.productName || "").trim();
-  const quantity = parseNumber(req.body?.quantity);
-  if (!productId || !productName) return res.status(400).json({ error: "Producto obligatorio." });
-
-  const stocks = Array.isArray(data.sellerStocks) ? data.sellerStocks : [];
-  const current = stocks.find((item) => String(item.sellerId) === sellerId && String(item.productId) === productId);
-  if (current) {
-    current.quantity = quantity;
-    current.productName = productName;
-    current.notes = String(req.body?.notes || current.notes || "").trim();
-    current.updatedAt = nowIso();
-  } else {
-    stocks.push({
-      id: uid("seller_stock"),
-      sellerId,
-      productId,
-      productName,
-      quantity,
-      notes: String(req.body?.notes || "").trim(),
-      updatedAt: nowIso()
-    });
-  }
-  data.sellerStocks = stocks;
-  writeDb(data);
-  return res.status(200).json({ ok: true });
+  return res.status(403).json({ error: "Accion no permitida. El stock del vendedor solo puede ser editado por admin." });
 });
 
 app.post("/api/seller-app/visits", (req, res) => {

@@ -151,6 +151,16 @@ function MainApp() {
     notes: ""
   });
 
+  function notifyError(message) {
+    const msg = String(message || "Error");
+    setError(msg);
+    if (Platform.OS === "web" && typeof window !== "undefined" && typeof window.alert === "function") {
+      window.alert(msg);
+      return;
+    }
+    Alert.alert("Error", msg);
+  }
+
   const productOptions = useMemo(
     () => [...(data.products || [])].sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "es", { sensitivity: "base" })),
     [data.products]
@@ -294,6 +304,26 @@ function MainApp() {
     setVisitItems([]);
   }
 
+  function goBackInApp() {
+    if (showVisitFormModal) return setShowVisitFormModal(false);
+    if (showAgendaFormModal) return setShowAgendaFormModal(false);
+    if (showVisitTypeMenu) return setShowVisitTypeMenu(false);
+    if (selectedVisitId) return setSelectedVisitId("");
+    if (activeMovementClientId) return setActiveMovementClientId("");
+    if (tab !== "resumen") return setTab("resumen");
+  }
+
+  function exitAppNow() {
+    Alert.alert("Salir", "¿Deseas cerrar sesión?", [
+      { text: "Cancelar", style: "cancel" },
+      {
+        text: "Cerrar sesión",
+        style: "destructive",
+        onPress: logout
+      }
+    ]);
+  }
+
   function onChangeMovementDate(_event, selectedDate) {
     setShowMovementDatePicker(false);
     if (!selectedDate) return;
@@ -435,14 +465,14 @@ function MainApp() {
 
   async function saveVisit() {
     const isDegustation = visitEntryType === "degustacion";
-    if (!isDegustation && !visitForm.clientId) return Alert.alert("Error", "Cliente obligatorio");
+    if (!isDegustation && !visitForm.clientId) return notifyError("Cliente obligatorio");
     if (isDegustation && !visitForm.clientId && !String(visitForm.prospectTradeName || "").trim()) {
-      return Alert.alert("Error", "En degustacion debes seleccionar cliente o indicar comercio prospecto.");
+      return notifyError("En degustacion debes seleccionar cliente o indicar comercio prospecto.");
     }
-    if (!visitForm.date) return Alert.alert("Error", "Fecha obligatoria");
-    if (!isDegustation && String(visitForm.amountCollected).trim() === "") return Alert.alert("Error", "Monto cobrado obligatorio (usa 0)");
-    if (visitItems.length === 0) return Alert.alert("Error", visitEntryType === "count_only" ? "Agrega al menos un producto para conteo" : "Agrega al menos un producto");
-    if (visitEntryType === "count_only" && visitForm.saleType === "consignado") return Alert.alert("Error", "En visita solo conteo, usa A vista o Boleto.");
+    if (!visitForm.date) return notifyError("Fecha obligatoria");
+    if (!isDegustation && String(visitForm.amountCollected).trim() === "") return notifyError("Monto cobrado obligatorio (usa 0)");
+    if (visitItems.length === 0) return notifyError(visitEntryType === "count_only" ? "Agrega al menos un producto para conteo" : "Agrega al menos un producto");
+    if (visitEntryType === "count_only" && visitForm.saleType === "consignado") return notifyError("En visita solo conteo, usa A vista o Boleto.");
     try {
       const saleType = isDegustation ? "degustacion" : visitForm.saleType;
       await apiPostAuth("/seller-app/visits", {
@@ -484,7 +514,7 @@ function MainApp() {
       await loadSellerData();
       Alert.alert("Listo", "Visita registrada");
     } catch (e) {
-      Alert.alert("Error", e.message || "No se pudo guardar visita");
+      notifyError(e.message || "No se pudo guardar visita");
     }
   }
 
@@ -502,6 +532,7 @@ function MainApp() {
       Alert.alert("Error", e.message || "No se pudo agendar");
     }
   }
+
 
   function onChangeApptDate(_event, selected) {
     setShowApptDatePicker(false);
@@ -579,6 +610,19 @@ function MainApp() {
           keyboardShouldPersistTaps="handled"
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#d96d20" />}
         >
+        <View style={styles.topBar}>
+          {tab === "resumen" ? (
+            <View style={styles.topBtnGhost} />
+          ) : (
+            <Pressable style={styles.topBtn} onPress={goBackInApp}>
+              <Text style={styles.topBtnText}>←</Text>
+            </Pressable>
+          )}
+          <Pressable style={styles.topBtn} onPress={exitAppNow}>
+            <Text style={styles.topBtnText}>⎋</Text>
+          </Pressable>
+        </View>
+
         <View style={styles.card}>
           <View style={styles.heroLogoWrap}>
             <Image source={LOGO} style={styles.heroLogo} resizeMode="contain" />
@@ -586,9 +630,7 @@ function MainApp() {
           <Text style={styles.h}>{data.seller?.name || "-"}</Text>
           <Text style={styles.s}>Ventas semana: {num(data.summary?.weekSales).toFixed(2)} | Mes: {num(data.summary?.monthSales).toFixed(2)}</Text>
           <Text style={styles.s}>Comision mes: {num(data.summary?.commissionAmount).toFixed(2)} | Deuda cartera: {num(data.summary?.totalDebt).toFixed(2)}</Text>
-          <View style={styles.rowBtns}>
-            <Pressable style={styles.copy} onPress={logout}><Text style={styles.copyT}>Salir</Text></Pressable>
-          </View>
+          <View style={styles.rowBtns} />
         </View>
 
         <View style={styles.tabs}>{[["resumen", "Metas"], ["clientes", "Clientes"], ["agenda", "Agenda"], ["visitas", "Visitas"], ["stock", "Stock disponible"]].map(([id, t]) => (
@@ -826,16 +868,28 @@ function MainApp() {
                 </Text>
                 {visitEntryType === "count_only" ? <Text style={styles.s}>Modo conteo: no descuenta stock, solo registra mercancia disponible.</Text> : null}
                 {visitEntryType === "degustacion" ? <Text style={styles.s}>Degustacion: descuenta stock, no genera deuda ni cobro.</Text> : null}
-                <Pressable style={styles.i} onPress={() => setShowVisitDatePicker(true)}>
-                  <Text style={styles.datePickerText}>{visitForm.date ? `Fecha: ${visitForm.date}` : "Seleccionar fecha (calendario)"}</Text>
-                </Pressable>
-                {showVisitDatePicker && (
-                  <DateTimePicker
-                    value={visitForm.date ? new Date(`${visitForm.date}T00:00:00`) : new Date()}
-                    mode="date"
-                    display="default"
-                    onChange={onChangeVisitDate}
+                {Platform.OS === "web" ? (
+                  <TextInput
+                    style={styles.i}
+                    placeholderTextColor="#8f816f"
+                    placeholder="Fecha visita (AAAA-MM-DD)"
+                    value={visitForm.date}
+                    onChangeText={(t) => setVisitForm((p) => ({ ...p, date: t }))}
                   />
+                ) : (
+                  <>
+                    <Pressable style={styles.i} onPress={() => setShowVisitDatePicker(true)}>
+                      <Text style={styles.datePickerText}>{visitForm.date ? `Fecha: ${visitForm.date}` : "Seleccionar fecha (calendario)"}</Text>
+                    </Pressable>
+                    {showVisitDatePicker && (
+                      <DateTimePicker
+                        value={visitForm.date ? new Date(`${visitForm.date}T00:00:00`) : new Date()}
+                        mode="date"
+                        display="default"
+                        onChange={onChangeVisitDate}
+                      />
+                    )}
+                  </>
                 )}
                 <View style={styles.selectorShell}>
                   <TextInput
@@ -917,16 +971,28 @@ function MainApp() {
                 {visitEntryType !== "degustacion" && (
                   <TextInput style={styles.i} placeholderTextColor="#8f816f" placeholder={visitEntryType === "count_only" ? "Cantidad disponible en cliente" : "Restante actual"} value={itemDraft.remaining} onChangeText={(t) => setItemDraft((p) => ({ ...p, remaining: t }))} keyboardType="decimal-pad" />
                 )}
-                <Pressable style={styles.i} onPress={() => setShowVisitNextDatePicker(true)}>
-                  <Text style={styles.datePickerText}>{visitForm.nextVisitDate ? `Proxima visita: ${visitForm.nextVisitDate}` : "Seleccionar proxima visita (calendario)"}</Text>
-                </Pressable>
-                {showVisitNextDatePicker && (
-                  <DateTimePicker
-                    value={visitForm.nextVisitDate ? new Date(`${visitForm.nextVisitDate}T00:00:00`) : new Date()}
-                    mode="date"
-                    display="default"
-                    onChange={onChangeVisitNextDate}
+                {Platform.OS === "web" ? (
+                  <TextInput
+                    style={styles.i}
+                    placeholderTextColor="#8f816f"
+                    placeholder="Proxima visita (AAAA-MM-DD)"
+                    value={visitForm.nextVisitDate}
+                    onChangeText={(t) => setVisitForm((p) => ({ ...p, nextVisitDate: t }))}
                   />
+                ) : (
+                  <>
+                    <Pressable style={styles.i} onPress={() => setShowVisitNextDatePicker(true)}>
+                      <Text style={styles.datePickerText}>{visitForm.nextVisitDate ? `Proxima visita: ${visitForm.nextVisitDate}` : "Seleccionar proxima visita (calendario)"}</Text>
+                    </Pressable>
+                    {showVisitNextDatePicker && (
+                      <DateTimePicker
+                        value={visitForm.nextVisitDate ? new Date(`${visitForm.nextVisitDate}T00:00:00`) : new Date()}
+                        mode="date"
+                        display="default"
+                        onChange={onChangeVisitNextDate}
+                      />
+                    )}
+                  </>
                 )}
                 <Pressable style={styles.copy} onPress={addVisitItem}><Text style={styles.copyT}>Agregar producto</Text></Pressable>
                 {visitItems.map((it) => <View key={it.id} style={styles.item}><Text style={styles.itemT}>{it.productName}</Text><Text style={styles.s}>{visitEntryType === "count_only" ? `Disponible ${num(it.remaining).toFixed(2)} unid` : visitEntryType === "degustacion" ? `Degustacion ${num(it.quantity).toFixed(2)} unid` : `Cant ${num(it.quantity).toFixed(2)} | Restante ${num(it.remaining).toFixed(2)} | Total ${num(it.total).toFixed(2)}`}</Text></View>)}
@@ -974,16 +1040,28 @@ function MainApp() {
                   {filteredApptClientOptions.length === 0 ? <Text style={styles.s}>Sin clientes con ese filtro.</Text> : null}
                 </View>
               )}
-              <Pressable style={styles.i} onPress={() => setShowApptDatePicker(true)}>
-                <Text style={styles.datePickerText}>{apptForm.date ? `Fecha: ${apptForm.date}` : "Seleccionar fecha (calendario)"}</Text>
-              </Pressable>
-              {showApptDatePicker && (
-                <DateTimePicker
-                  value={apptForm.date ? new Date(`${apptForm.date}T00:00:00`) : new Date()}
-                  mode="date"
-                  display="default"
-                  onChange={onChangeApptDate}
+              {Platform.OS === "web" ? (
+                <TextInput
+                  style={styles.i}
+                  placeholderTextColor="#8f816f"
+                  placeholder="Fecha (AAAA-MM-DD)"
+                  value={apptForm.date}
+                  onChangeText={(t) => setApptForm((p) => ({ ...p, date: t }))}
                 />
+              ) : (
+                <>
+                  <Pressable style={styles.i} onPress={() => setShowApptDatePicker(true)}>
+                    <Text style={styles.datePickerText}>{apptForm.date ? `Fecha: ${apptForm.date}` : "Seleccionar fecha (calendario)"}</Text>
+                  </Pressable>
+                  {showApptDatePicker && (
+                    <DateTimePicker
+                      value={apptForm.date ? new Date(`${apptForm.date}T00:00:00`) : new Date()}
+                      mode="date"
+                      display="default"
+                      onChange={onChangeApptDate}
+                    />
+                  )}
+                </>
               )}
               <TextInput style={[styles.i, { minHeight: 80 }]} multiline placeholderTextColor="#8f816f" placeholder="Notas" value={apptForm.notes} onChangeText={(t) => setApptForm((p) => ({ ...p, notes: t }))} />
               <View style={styles.modalActions}>
@@ -1037,6 +1115,10 @@ function MainApp() {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: "#fff8ef" },
   wrap: { padding: 14, paddingBottom: 24 },
+  topBar: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  topBtn: { backgroundColor: "#fff", borderWidth: 1, borderColor: "#e6d3bc", borderRadius: 12, paddingVertical: 7, paddingHorizontal: 14 },
+  topBtnGhost: { width: 44, height: 36 },
+  topBtnText: { color: "#5d4730", fontWeight: "800", fontSize: 18 },
   heroLogoWrap: { alignItems: "center", marginBottom: 8 },
   heroLogo: { width: 84, height: 84, opacity: 0.95 },
   card: { backgroundColor: "#fff", borderRadius: 14, borderWidth: 1, borderColor: "#f0dfca", padding: 12, marginTop: 10 },
